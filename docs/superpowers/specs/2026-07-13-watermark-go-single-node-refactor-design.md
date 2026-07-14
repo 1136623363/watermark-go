@@ -440,8 +440,9 @@ A→502 或 B→A reconcile 后才继续。任务 18 观察结束才补写容器
   >=128-bit、用途/TTL 绑定的 bearer capability（legacy shareId 仅限流只读）；fallback 使用服务端签名
   poll/download URL；m3u8 poll 按前端固定 `/api/task/:id` 使用随机 >=128-bit task ID，最终 file URL 才
   签名。发送 token 的 route 兼容 token/Bearer，不得强迫前端未发送的 query/header。
-- root rewrite、GC 和 full scan 没完成前，R1 只能保持 pending；不得把 staged tree 或单次 worktree
-  扫描写成“历史已清洁”。
+- 唯一干净根 `5a1dd14aa38c63091d8d7139fd0024718b79bdbb`（tree
+  `525e9fb72308c4af5478ffcc1705d8af73c82c1e`）已完成 root rewrite、GC、fsck、policy 与 fixed Gitleaks
+  full scan；后续只从该 root 向前提交，禁止恢复重写前 refs/history，任务 16 再验证远端边界。
 
 ### 解析基线
 

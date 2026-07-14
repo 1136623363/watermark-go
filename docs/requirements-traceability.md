@@ -8,7 +8,7 @@
 
 | 编号 | 用户要求 | 当前状态 | 实现证据路径 | 测试证据路径 | 构建、部署或运行证据路径 |
 | --- | --- | --- | --- | --- | --- |
-| R1 | 建立独立 GitHub 仓库 `1136623363/watermark-go` 与本地项目 `/srv/watermark-go`；新仓库不携带凭据或退役部署入口。 | 任务 1 门禁与 staged tree 已就绪；唯一根 rewrite、GC、full scan 尚待本轮审查批准后完成，任务 16 再验证远端。 | `.gitignore`、`.dockerignore`、`约束文件.md`、`docs/source-provenance.json`、`docs/research/media-parser-provenance.json`、`deploy/env.example` | `internal/policy/repository_test.go`、`internal/policy/media_parser_research_test.go` | `.github/workflows/ci-image.yml`、`artifacts/release/repository-and-image.txt`、`artifacts/release/full-history-secret-scan.txt` |
+| R1 | 建立独立 GitHub 仓库 `1136623363/watermark-go` 与本地项目 `/srv/watermark-go`；新仓库不携带凭据或退役部署入口。 | 任务 1 已建立仓库门禁与经验证的唯一干净根历史：root `5a1dd14aa38c63091d8d7139fd0024718b79bdbb` 无 parent，GC/fsck/policy/Gitleaks full scan 通过；任务 16 再验证远端唯一来源。 | `.gitignore`、`.dockerignore`、`约束文件.md`、`docs/source-provenance.json`、`docs/research/media-parser-provenance.json`、`deploy/env.example` | `internal/policy/repository_test.go`、`internal/policy/media_parser_research_test.go` | `.github/workflows/ci-image.yml`、`artifacts/release/repository-and-image.txt`、`artifacts/release/full-history-secret-scan.txt` |
 | R2 | 交付 Go 模块化单体，由 Go 承担 HTTP、业务、数据和调度，主业务不依赖旧后端。 | 计划任务 15 验证；实现分布在任务 2、3、5、7、8、9、11。 | `cmd/watermark-go/main.go`、`internal/app/app.go`、`internal/httpapi/router.go`、`internal/parser/descriptor.go`、`internal/parse/service.go`、`internal/task/worker.go` | `internal/app/app_test.go`、`internal/httpapi/router_test.go`、`internal/parser/registry_test.go`、`internal/parse/service_test.go`、`internal/task/worker_test.go` | `Dockerfile`、`artifacts/verification/local-verification.md` |
 | R3 | 保持当前小程序的客户端 session、同步解析、异步解析、缓存分享、下载兜底、m3u8 和 performance 遥测契约，并以加法字段支持音频/图集/Live Photo。 | 计划任务 12、18 验证；接口实现分布在任务 3、6—9、11。 | `internal/auth/client.go`、`internal/parser/parser.go`、`internal/parse/normalize.go`、`internal/httpapi/client_handlers.go`、`internal/download/service.go`、`internal/media/m3u8.go`、`internal/observability/client_performance.go`、`docs/frontend-provenance.json` | `tests/contracts/frontend_contract_test.go`、`internal/parse/url_test.go`、`tests/e2e/test_frontend_flow.py`、`scripts/verify-frontend-provenance.sh` | `artifacts/acceptance/frontend-domain-e2e.json` |
 | R4 | 保留后台登录、运行诊断、结果库、平台样本和批量基准等单机管理能力。 | 任务 12 契约验证 + 任务 17 运行验证；后台与样本实现由任务 10、11 完成。 | `internal/admin/service.go`、`internal/admin/baseline.go`、`internal/httpapi/admin_handlers.go` | `internal/admin/service_test.go`、`internal/admin/baseline_test.go`、`internal/httpapi/admin_contract_test.go` | `artifacts/acceptance/admin-and-baseline.json` |
@@ -81,7 +81,8 @@ legacy shareId 只限流只读且不再生成。fallback poll/download 使用服
   `artifacts/verification/secret-scan.txt`。
 - 任务 16 在首次 push 前扫描全部可推送 refs且只添加新仓库 `origin`，发布 recovery candidate A；
   `repository-and-image.txt` 的 A role、`sbom-recovery.spdx.json` 和 attestation subject 绑定其完整 commit/
-  RepoDigest。root rewrite、GC、full scan 未完成前，R1 与任务 16 仍 pending。
+  RepoDigest。root rewrite、GC、fsck、policy 与 fixed Gitleaks full scan 已完成；任务 16 仍需验证远端与
+  Actions/GHCR，禁止恢复任何旧仓库 refs/history。
 - 任务 17 先以独立 DB/schema、独立 Redis namespace 完成 A shadow 隔离全验；强制
   `shadow DB identity != final DB identity`。干净 final DB 只接收 production full import 与 scrub 后的
   生产数据；final checksum 证明无本轮 shadow/A-B acceptance 的 runId/taskId/sentinel/outbox，legacy

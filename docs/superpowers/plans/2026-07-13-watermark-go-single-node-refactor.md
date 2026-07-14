@@ -117,23 +117,26 @@ git commit -m "chore: establish repository safety policy"
 无 parent 根提交，因此不得声称保留了重建前的中间 commit 链。`docs/source-provenance.json` 必须
 进入该最终根树并精确记录批准的 source commit 与 source tree。
 
-**当前状态不是完成证据：** 当前根历史仍未重写，历史对象仍含已从 index/worktree 清除的遗留
-Cookie blob。现阶段只完成门禁、代码和文档的 staged tree；当前不得视为完成，也不得在 trace 中声称
-已有干净根历史。
+**完成证据（2026-07-14）：** 批准树已重建为唯一无 parent 根：
+`rootCommit=5a1dd14aa38c63091d8d7139fd0024718b79bdbb`、
+`rootTree=525e9fb72308c4af5478ffcc1705d8af73c82c1e`。旧 refs/ORIG_HEAD/reflog 已清理并执行 aggressive GC/prune；
+复验只有 `refs/heads/main`、恰好一个 root、该 root 无 parent、reflog 为空、fsck 无 unreachable
+（`git fsck --full --unreachable --no-reflogs` 无输出）。`go test ./...`、`go test -race -p 2 ./...`、`go vet ./...`、格式/diff check、repository
+policy 和固定 Gitleaks `v8.30.1 --log-opts=--all` full scan PASS，旧 Cookie blobs 不再可达或残留。
 
-- [ ] **步骤 7：审查批准后重建根并复验**
+- [x] **步骤 7：审查批准后重建根并复验**
 
-只有本轮 docs/代码 review 批准后，才由 sole writer 执行一次 root rewrite，把批准的 staged tree
+本轮 docs/代码 review 批准后，已由 sole writer 执行一次 root rewrite，把批准的 staged tree
 写成唯一无 parent 根；随后删除临时 refs/reflog、执行可验证的 GC/prune，再对最终 refs、index、
-worktree 和剩余 Git objects 做 policy + Gitleaks full scan。root rewrite、GC、full scan 任一步未完成或
-失败，任务 1 和 R1 都保持未完成。禁止在审查批准前执行这些历史变更。
+worktree 和剩余 Git objects 做 policy + Gitleaks full scan。上述完成证据已通过；后续任务只允许从该
+root 正常向前提交，禁止 fetch/恢复旧仓库 refs、旧对象或重写前历史。
 
 **已暂存、待步骤 7 固化的安全前置纠偏：** `github.com/goccy/go-yaml` 因 Compose AST 门禁成为直接
 依赖；旧树中的 `WEIBO_COOKIE`/`XIGUA_COOKIE` 已改为仅在环境变量非空时发送并保留回归测试。来源树中的通用签名
 默认值、旧根 Compose、旧反向代理入口和可变上游同步脚本已从 staged tree 清除，且已补充
 `docs/source-provenance.json`。`ucmao/media-parser` 研究也固定为 commit/tree/license hash，明确
-`codeCopied=false`、只采用概念与测试设计且不成为 93 样本基线权威；这些事实只有步骤 7 的新根、GC
-和全扫描通过后才成为最终仓库证据。
+`codeCopied=false`、只采用概念与测试设计且不成为 93 样本基线权威；这些事实已由步骤 7 的新根、GC
+和全扫描固化并复验。
 
 ## 任务 2：重命名模块并建立可测试应用骨架
 

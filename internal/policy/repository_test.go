@@ -1362,18 +1362,23 @@ func TestRepositoryPlanDefinesRouteAuthCompatibilityInventory(t *testing.T) {
 	}
 }
 
-func TestRepositoryDocumentsTreatRootRewriteAsPendingAndR4AsRuntimeValidated(t *testing.T) {
+func TestRepositoryDocumentsRecordVerifiedCleanRootAndR4AsRuntimeValidated(t *testing.T) {
 	root := repositoryRoot(t)
 	plan := readPolicyDocument(t, root, "docs/superpowers/plans/2026-07-13-watermark-go-single-node-refactor.md")
 	task1 := policyDocumentSection(t, plan, "## 任务 1：", "## 任务 2：")
-	for _, required := range []string{"当前根历史仍未重写", "root rewrite", "GC", "full scan", "当前不得视为完成"} {
+	for _, required := range []string{
+		"- [x] **步骤 7：审查批准后重建根并复验**",
+		"rootCommit=5a1dd14aa38c63091d8d7139fd0024718b79bdbb",
+		"rootTree=525e9fb72308c4af5478ffcc1705d8af73c82c1e",
+		"无 parent", "reflog 为空", "fsck 无 unreachable", "v8.30.1", "full scan PASS",
+	} {
 		if !strings.Contains(task1, required) {
-			t.Errorf("Task 1 pending completion contract omits %q", required)
+			t.Errorf("Task 1 clean-root completion evidence omits %q", required)
 		}
 	}
 	trace := readPolicyDocument(t, root, "docs/requirements-traceability.md")
-	if strings.Contains(trace, "任务 1 已建立仓库门禁与干净根历史") {
-		t.Fatal("traceability falsely claims the clean root history already exists")
+	if !strings.Contains(trace, "任务 1 已建立仓库门禁与经验证的唯一干净根历史") {
+		t.Fatal("traceability does not record the verified clean root history")
 	}
 	for _, required := range []string{"任务 12 契约验证", "任务 17 运行验证"} {
 		if !strings.Contains(trace, required) {
