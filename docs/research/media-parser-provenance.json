@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "sourceRepository": "https://github.com/ucmao/media-parser",
+  "defaultBranch": "starter",
+  "commit": "033424b08ac6468c8c37b6fb0c98a0446bb09d9e",
+  "tree": "56e556db619a296340fa8b00f3c726676cf32bcf",
+  "capturedAt": "2026-07-14",
+  "reviewedPaths": [
+    "README.md",
+    "LICENSE",
+    "app.py",
+    "Dockerfile",
+    "docker-compose.yml",
+    "requirements.txt",
+    "configs/business_config.json",
+    "configs/general_constants.py",
+    "configs/logging_config.py",
+    "src/__init__.py",
+    "src/parser_factory.py",
+    "src/api/parse.py",
+    "src/parsers/base_parser.py",
+    "src/parsers/bilibili_parser.py",
+    "src/parsers/douyin_parser.py",
+    "src/parsers/kuaishou_parser.py",
+    "src/parsers/xiaohongshu_parser.py",
+    "utils/web_fetcher.py"
+  ],
+  "license": {
+    "spdx": "MIT",
+    "file": "LICENSE",
+    "sha256": "122b79645845bb6445da24e9c6eedd3597dce6259070e301b2f06bd49aa3c280"
+  },
+  "adoption": {
+    "mode": "concepts-and-test-design-only",
+    "codeCopied": false,
+    "baselineAuthority": false,
+    "attributionRequiredIfCodeCopied": true
+  },
+  "securityDisposition": "do-not-use-as-runtime-or-network-security-baseline"
+}

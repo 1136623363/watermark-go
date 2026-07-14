@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "sourceRepository": "https://github.com/1136623363/watermark",
+  "sourcePathAtCapture": "/srv/watermark",
+  "commit": "5d72c4925017676b6183b907dfe11ec60a4885bf",
+  "tree": "03c72a16532f51db76203967a3b982d49d4909d1",
+  "workingTreeStatus": "clean",
+  "trackedRoots": [
+    "miniprogram",
+    "test",
+    "project.config.json"
+  ],
+  "manifestAlgorithm": "sha256(sha256sum(each tracked file in git ls-files -z order))",
+  "manifestCommand": "git ls-files -z -- miniprogram test project.config.json | xargs -0 sha256sum | sha256sum",
+  "manifestSha256": "3e3f172b90439252e3601892e15fef2d398747ac9630fbc148013304d8c776f8"
+}

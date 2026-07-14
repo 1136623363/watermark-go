@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, shrink-to-fit=no">
+    <meta name="referrer" content="no-referrer">
+    <title>{{ if .title }}{{ .title }}{{ else }}视频预览{{ end }}</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
+            background:
+                radial-gradient(circle at top, rgba(255, 122, 47, 0.18), transparent 30%),
+                linear-gradient(180deg, #fff8f2 0%, #f6f9ff 100%);
+            color: #1f2937;
+        }
+
+        .shell {
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .card {
+            width: min(960px, 100%);
+            margin: 0 auto;
+            background: rgba(255, 255, 255, 0.92);
+            border: 1px solid rgba(255, 255, 255, 0.7);
+            border-radius: 22px;
+            box-shadow: 0 18px 40px rgba(15, 23, 42, 0.1);
+            overflow: hidden;
+        }
+
+        .head {
+            padding: 18px 20px 10px;
+        }
+
+        .title {
+            margin: 0;
+            font-size: 20px;
+            font-weight: 700;
+            line-height: 1.4;
+        }
+
+        .player-wrap {
+            position: relative;
+            width: 100%;
+            aspect-ratio: 16 / 9;
+            background: #0f172a;
+        }
+
+        .poster {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            filter: brightness(0.82);
+        }
+
+        .frame {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            border: 0;
+            background: #000;
+            object-fit: contain;
+        }
+
+        .player-note {
+            display: none;
+            position: absolute;
+            inset: auto 14px 14px;
+            border-radius: 12px;
+            padding: 11px 13px;
+            background: rgba(15, 23, 42, 0.88);
+            color: #e5eef6;
+            font-size: 14px;
+            line-height: 1.45;
+        }
+
+        .player-note.visible {
+            display: block;
+        }
+
+        .actions {
+            display: none;
+            flex-wrap: wrap;
+            gap: 12px;
+            padding: 0 20px 20px;
+        }
+
+        .actions.visible {
+            display: flex;
+        }
+
+        .btn {
+            appearance: none;
+            border: 0;
+            border-radius: 999px;
+            padding: 12px 18px;
+            text-decoration: none;
+            font-size: 14px;
+            font-weight: 600;
+            line-height: 1.2;
+            cursor: pointer;
+        }
+
+        .btn-primary {
+            color: #fff;
+            background: linear-gradient(135deg, #ff7a2f, #ff5b2f);
+            box-shadow: 0 10px 18px rgba(255, 122, 47, 0.26);
+        }
+
+        .btn-ghost {
+            color: #1f2937;
+            background: rgba(255, 255, 255, 0.84);
+            border: 1px solid rgba(31, 41, 55, 0.12);
+        }
+
+        .empty {
+            padding: 40px 20px;
+            text-align: center;
+            color: #6b7280;
+        }
+
+        @media (max-width: 640px) {
+            .shell {
+                padding: 12px;
+            }
+
+            .head {
+                padding: 16px 16px 10px;
+            }
+
+            .actions {
+                padding: 0 16px 16px;
+            }
+
+            .btn {
+                width: 100%;
+                text-align: center;
+            }
+        }
+    </style>
+</head>
+<body>
+<div class="shell">
+    <div class="card">
+        {{ if .src }}
+        <div class="head">
+            <h1 class="title">{{ if .title }}{{ .title }}{{ else }}视频预览{{ end }}</h1>
+        </div>
+        <div class="player-wrap">
+            {{ if .poster }}<img class="poster" src="{{ .poster }}" alt="poster">{{ end }}
+            <video
+                id="playerVideo"
+                class="frame"
+                data-src="{{ .src }}"
+                {{ if .poster }}poster="{{ .poster }}"{{ end }}
+                controls
+                playsinline
+                preload="metadata"
+            ></video>
+            <div class="player-note" id="playerNote"></div>
+        </div>
+        <div class="actions" id="previewActions">
+            <a class="btn btn-primary" href="{{ .src }}" target="_blank" rel="noreferrer" referrerpolicy="no-referrer">打开预览</a>
+            {{ if .fallback }}<a class="btn btn-ghost" href="{{ .fallback }}" target="_blank" rel="noreferrer" referrerpolicy="no-referrer">打开下载地址</a>{{ end }}
+        </div>
+        {{ else }}
+        <div class="empty">暂无可用预览</div>
+        {{ end }}
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.18/dist/hls.min.js"></script>
+<script>
+    (function () {
+        var video = document.getElementById('playerVideo');
+        var note = document.getElementById('playerNote');
+        var actions = document.getElementById('previewActions');
+        if (!video || !actions) {
+            return;
+        }
+
+        var src = video.getAttribute('data-src') || '';
+        var settled = false;
+        var hls = null;
+        var showActions = function () {
+            actions.classList.add('visible');
+        };
+        var showNote = function (text) {
+            if (!note) return;
+            note.textContent = text || '';
+            note.classList.toggle('visible', !!text);
+        };
+        var isM3U8 = function (url) {
+            return /\.m3u8(?:$|[?#])/i.test(url || '');
+        };
+
+        video.addEventListener('loadedmetadata', function () {
+            settled = true;
+        });
+
+        video.addEventListener('error', function () {
+            settled = true;
+            showNote('视频暂时无法在浏览器内播放，可打开原始地址查看。');
+            showActions();
+        });
+
+        if (isM3U8(src)) {
+            if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                video.src = src;
+            } else if (window.Hls && window.Hls.isSupported()) {
+                hls = new window.Hls({ enableWorker: true, lowLatencyMode: false });
+                hls.loadSource(src);
+                hls.attachMedia(video);
+                hls.on(window.Hls.Events.ERROR, function (_event, data) {
+                    if (data && data.fatal) {
+                        showNote('视频流暂时无法在浏览器内播放，可打开原始地址查看。');
+                        showActions();
+                    }
+                });
+            } else {
+                showNote('当前浏览器不支持直接播放 m3u8，可打开原始地址查看。');
+                showActions();
+            }
+        } else {
+            video.src = src;
+        }
+
+        window.setTimeout(function () {
+            if (!settled) {
+                showActions();
+            }
+        }, 3200);
+    })();
+</script>
+</body>
+</html>

@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ .title }}</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 0; background: #f5f7fb; color: #1f2937; }
+        .wrap { max-width: 840px; margin: 32px auto; padding: 0 16px; }
+        .card { background: #fff; border-radius: 16px; padding: 24px; box-shadow: 0 8px 24px rgba(15,23,42,.08); }
+        h1 { margin: 0 0 8px; font-size: 28px; }
+        p.desc { margin: 0 0 24px; color: #6b7280; }
+        .row { display: grid; grid-template-columns: 220px 1fr; gap: 16px; align-items: start; margin-bottom: 18px; }
+        .row label { font-weight: 600; padding-top: 10px; }
+        .hint { color: #6b7280; font-size: 13px; margin-top: 6px; }
+        input { width: 100%; box-sizing: border-box; border: 1px solid #d1d5db; border-radius: 10px; padding: 10px 12px; font-size: 14px; }
+        .actions { display: flex; gap: 12px; margin-top: 24px; }
+        button, a.btn { border: 0; border-radius: 10px; padding: 11px 16px; font-size: 14px; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; }
+        button.primary { background: #111827; color: #fff; }
+        button.secondary, a.btn { background: #eef2ff; color: #374151; }
+        .status { margin-top: 16px; padding: 12px 14px; border-radius: 10px; font-size: 14px; display: none; }
+        .status.ok { display: block; background: #ecfdf5; color: #065f46; }
+        .status.err { display: block; background: #fef2f2; color: #991b1b; }
+        code { background: #f3f4f6; padding: 2px 6px; border-radius: 6px; }
+    </style>
+</head>
+<body>
+<div class="wrap">
+    <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:20px;">
+            <div>
+                <h1>运行时设置</h1>
+                <p class="desc">修改后立即生效。当前主要用于出站代理、HTTP 超时、`yt-dlp` 和 `ffmpeg` 路径。</p>
+            </div>
+            <a class="btn" href="/">返回首页</a>
+        </div>
+
+        <div class="row">
+            <label for="outboundProxy">出站代理</label>
+            <div>
+                <input id="outboundProxy" placeholder="例如 http://127.0.0.1:7890 或 socks5://127.0.0.1:7891">
+                <div class="hint">用于 parser 和 `yt-dlp` 的外部请求。留空表示直连。</div>
+            </div>
+        </div>
+
+        <div class="row">
+            <label for="httpTimeoutSeconds">HTTP 超时秒数</label>
+            <div>
+                <input id="httpTimeoutSeconds" type="number" min="5" max="300" placeholder="30">
+                <div class="hint">用于后端出站 HTTP 请求和 parser 超时。</div>
+            </div>
+        </div>
+
+        <div class="row">
+            <label for="rateLimitEnabled">接口限流</label>
+            <div>
+                <select id="rateLimitEnabled">
+                    <option value="false">关闭（开发/测试推荐）</option>
+                    <option value="true">开启（生产防刷）</option>
+                </select>
+                <div class="hint">关闭后解析接口、后台平台测试和 m3u8 合并不会触发“请求过于频繁”。</div>
+            </div>
+        </div>
+
+        <div class="row">
+            <label for="ytDlpTimeoutSeconds">yt-dlp 超时秒数</label>
+            <div>
+                <input id="ytDlpTimeoutSeconds" type="number" min="10" max="600" placeholder="60">
+                <div class="hint">用于 YouTube、TikTok、Instagram、Vimeo、Dailymotion、m3u8 fallback。</div>
+            </div>
+        </div>
+
+        <div class="row">
+            <label for="ytDlpBinary">yt-dlp 路径</label>
+            <div>
+                <input id="ytDlpBinary" placeholder="留空则从 PATH 查找">
+            </div>
+        </div>
+
+        <div class="row">
+            <label for="ffmpegBinary">ffmpeg 路径</label>
+            <div>
+                <input id="ffmpegBinary" placeholder="留空则从 PATH 查找">
+                <div class="hint">仅影响 `/api/m3u8/merge`。</div>
+            </div>
+        </div>
+
+        <div class="actions">
+            <button class="primary" id="saveBtn">保存并应用</button>
+            <button class="secondary" id="reloadBtn">重新读取</button>
+        </div>
+
+        <div id="status" class="status"></div>
+    </div>
+</div>
+<script>
+    const fields = {
+        outboundProxy: document.getElementById('outboundProxy'),
+        httpTimeoutSeconds: document.getElementById('httpTimeoutSeconds'),
+        rateLimitEnabled: document.getElementById('rateLimitEnabled'),
+        ytDlpTimeoutSeconds: document.getElementById('ytDlpTimeoutSeconds'),
+        ytDlpBinary: document.getElementById('ytDlpBinary'),
+        ffmpegBinary: document.getElementById('ffmpegBinary')
+    };
+    const statusEl = document.getElementById('status');
+
+    function setStatus(type, message) {
+        statusEl.className = 'status ' + type;
+        statusEl.textContent = message;
+    }
+
+    async function loadSettings() {
+        const res = await fetch('/api/settings');
+        const payload = await res.json();
+        const data = payload.data || {};
+        fields.outboundProxy.value = data.outboundProxy || '';
+        fields.httpTimeoutSeconds.value = data.httpTimeoutSeconds || 30;
+        fields.rateLimitEnabled.value = data.rateLimitEnabled ? 'true' : 'false';
+        fields.ytDlpTimeoutSeconds.value = data.ytDlpTimeoutSeconds || 60;
+        fields.ytDlpBinary.value = data.ytDlpBinary || '';
+        fields.ffmpegBinary.value = data.ffmpegBinary || '';
+        setStatus('ok', '当前设置已加载');
+    }
+
+    async function saveSettings() {
+        const payload = {
+            outboundProxy: fields.outboundProxy.value.trim(),
+            httpTimeoutSeconds: Number(fields.httpTimeoutSeconds.value || 30),
+            rateLimitEnabled: fields.rateLimitEnabled.value === 'true',
+            ytDlpTimeoutSeconds: Number(fields.ytDlpTimeoutSeconds.value || 60),
+            ytDlpBinary: fields.ytDlpBinary.value.trim(),
+            ffmpegBinary: fields.ffmpegBinary.value.trim()
+        };
+        const res = await fetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        const body = await res.json();
+        if (!res.ok || body.code !== 0) {
+            throw new Error(body.msg || '保存失败');
+        }
+        setStatus('ok', '设置已保存并立即生效');
+    }
+
+    document.getElementById('saveBtn').addEventListener('click', async () => {
+        try {
+            await saveSettings();
+        } catch (err) {
+            setStatus('err', err.message || '保存失败');
+        }
+    });
+
+    document.getElementById('reloadBtn').addEventListener('click', async () => {
+        try {
+            await loadSettings();
+        } catch (err) {
+            setStatus('err', err.message || '加载失败');
+        }
+    });
+
+    loadSettings().catch((err) => setStatus('err', err.message || '加载失败'));
+</script>
+</body>
+</html>

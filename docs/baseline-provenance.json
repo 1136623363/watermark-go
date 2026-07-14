@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "sourceRepository": "https://github.com/1136623363/watermark-backend",
+  "sourceCommit": "1d3dc9a6064f3f2e41af9ea92a29566885939175",
+  "sourceTree": "d1aac032059b5622fc9f0b5cd6ce321a77978a1e",
+  "baselineDocument": "测试结果基准.md",
+  "baselineDocumentSourcePathAtCapture": "/srv/watermark/watermark-backend/测试结果基准.md",
+  "baselineDocumentTracked": false,
+  "baselineDocumentBinding": "user-provided external acceptance baseline captured by content hash; not attributed to sourceCommit",
+  "baselineDocumentSha256": "a470a87e64242e5e97ee1a03571c43198a6bd7036c0b756e8c69fd9b639df29a",
+  "catalogInputs": [
+    "internal/server/admin_handlers.go",
+    "internal/server/admin_catalog_text.go",
+    "internal/server/admin_test_samples.go",
+    "internal/server/migrations/003_platform_test_samples.sql",
+    "internal/server/migrations/006_enable_default_url_samples.sql"
+  ],
+  "catalogManifestAlgorithm": "sha256(filename + NUL + source-commit file bytes, in listed order)",
+  "catalogManifestSha256": "05d832a7d59897d16cd4bd26a7d02d6f6bdf5ec6829c1a280e974579fa29bf6a"
+}

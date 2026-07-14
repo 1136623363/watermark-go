@@ -1,0 +1,78 @@
+# Secrets and machine-local configuration
+.env*
+*.pem
+*.key
+*.p12
+*.crt
+*.cer
+*.cert
+*.der
+*.pfx
+*密码*
+*服务器配置*
+
+# Retired CI and worker deployment artifacts
+jenkinsfile
+Jenkinsfile
+docker-compose.prod.worker.yml
+
+# Build outputs and developer tooling
+bin/
+dist/
+.gocache/
+.idea/
+.vscode/
+*.exe
+*.pyc
+__pycache__/
+.venv-pytest/
+_legacy/
+third_party/
+tools/
+
+# Runtime cache, logs, temporary files, and reports
+/cache/
+/.cache/
+/logs/
+/tmp/
+/.tmp/
+/.tmp-yt/
+/reports/
+/*.log
+
+# Database and Redis runtime data
+/.docker-data/
+/data/mysql/
+/data/redis/
+/mysql-data/
+/redis-data/
+/*.db
+/*.db-journal
+/*.db-shm
+/*.db-wal
+/*.sqlite
+/*.sqlite3
+/*.rdb
+/*.aof
+/appendonlydir/
+
+# Downloaded media
+/download/
+/downloads/
+/*.mp3
+/*.m4a
+/*.wav
+/*.mp4
+/*.mkv
+/*.mov
+/*.webm
+/*.flv
+
+# Docker/OCI image exports
+/docker-export/
+/docker-exports/
+/*.tar
+/*.tar.gz
+/*.tgz
+/*.oci
+/*.oci.tar
