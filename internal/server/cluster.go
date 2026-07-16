@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"watermark-backend/internal/runtimecfg"
+	"github.com/1136623363/watermark-go/internal/runtimecfg"
 )
 
 type clusterNodeInfo struct {

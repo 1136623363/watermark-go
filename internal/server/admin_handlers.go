@@ -14,8 +14,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"watermark-backend/internal/parsers/native"
-	"watermark-backend/internal/runtimecfg"
+	"github.com/1136623363/watermark-go/internal/parsers/native"
+	"github.com/1136623363/watermark-go/internal/runtimecfg"
 )
 
 type adminTestLink struct {

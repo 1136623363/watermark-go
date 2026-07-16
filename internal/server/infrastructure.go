@@ -62,7 +62,11 @@ func closeInfrastructure() {
 }
 
 func openOptionalMySQL(ctx context.Context) (*sql.DB, error) {
-	dsn := strings.TrimSpace(os.Getenv("MYSQL_DSN"))
+	return openConfiguredMySQL(ctx, os.Getenv("MYSQL_DSN"))
+}
+
+func openConfiguredMySQL(ctx context.Context, rawDSN string) (*sql.DB, error) {
+	dsn := strings.TrimSpace(rawDSN)
 	if dsn == "" {
 		logInfof("mysql disabled: MYSQL_DSN is empty")
 		return nil, nil

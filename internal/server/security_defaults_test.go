@@ -3,6 +3,8 @@ package server
 import (
 	"testing"
 	"time"
+
+	"github.com/1136623363/watermark-go/internal/config"
 )
 
 func TestAuthenticateAdminRejectsMissingEnvironmentPassword(t *testing.T) {
@@ -36,7 +38,8 @@ func TestLoadAdminSessionSecretFailsClosedWhenEntropyUnavailable(t *testing.T) {
 }
 
 func TestDownloadFallbackSigningRejectsMissingSecret(t *testing.T) {
-	t.Setenv("DOWNLOAD_FALLBACK_TOKEN_SECRET", "")
+	setApplicationDownloadConfig(config.DownloadConfig{})
+	t.Cleanup(func() { setApplicationDownloadConfig(config.DownloadConfig{}) })
 	t.Setenv("ADMIN_SESSION_SECRET", "")
 
 	if got := signDownloadFallbackToken("example", 1700000000); got != "" {

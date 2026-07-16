@@ -25,7 +25,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"watermark-backend/internal/runtimecfg"
+	"github.com/1136623363/watermark-go/internal/runtimecfg"
 )
 
 const (
@@ -1600,7 +1600,7 @@ func downloadFallbackMaxBytes(mediaType string) int64 {
 }
 
 func downloadFallbackTokenSecret() string {
-	return strings.TrimSpace(os.Getenv("DOWNLOAD_FALLBACK_TOKEN_SECRET"))
+	return strings.TrimSpace(currentApplicationDownloadConfig().TokenSecret)
 }
 
 func downloadFallbackUserAgent() string {

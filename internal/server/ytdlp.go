@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"watermark-backend/internal/parsers/native"
-	"watermark-backend/internal/runtimecfg"
+	"github.com/1136623363/watermark-go/internal/parsers/native"
+	"github.com/1136623363/watermark-go/internal/runtimecfg"
 )
 
 const ytDLPFormatSelector = "best[protocol=https][vcodec!=none][acodec!=none]/best[protocol=http][vcodec!=none][acodec!=none]/best[vcodec!=none][acodec!=none]/best"

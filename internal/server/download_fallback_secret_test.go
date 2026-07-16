@@ -11,11 +11,15 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"watermark-backend/internal/runtimecfg"
+	"github.com/1136623363/watermark-go/internal/config"
+	"github.com/1136623363/watermark-go/internal/runtimecfg"
 )
 
 func TestDownloadFallbackURLBuildersRejectMissingSecret(t *testing.T) {
-	t.Setenv("DOWNLOAD_FALLBACK_TOKEN_SECRET", "")
+	setApplicationDownloadConfig(config.DownloadConfig{})
+	t.Cleanup(func() { setApplicationDownloadConfig(config.DownloadConfig{}) })
+	t.Setenv("DOWNLOAD_TOKEN_SECRET", strings.Repeat("C9", 20))
+	t.Setenv("DOWNLOAD_FALLBACK_TOKEN_SECRET", strings.Repeat("D8", 20))
 	t.Setenv("ADMIN_SESSION_SECRET", strings.Repeat("A7", 20))
 	t.Setenv("DOWNLOAD_FALLBACK_CDN_BASE_URL", "https://cdn.example.invalid")
 	context := downloadFallbackTestContext()
@@ -36,7 +40,8 @@ func TestDownloadFallbackURLBuildersRejectMissingSecret(t *testing.T) {
 }
 
 func TestDownloadFallbackURLBuildersRejectEmptyTicketInputs(t *testing.T) {
-	t.Setenv("DOWNLOAD_FALLBACK_TOKEN_SECRET", strings.Repeat("A7", 20))
+	setApplicationDownloadConfig(config.DownloadConfig{TokenSecret: strings.Repeat("A7", 20)})
+	t.Cleanup(func() { setApplicationDownloadConfig(config.DownloadConfig{}) })
 	t.Setenv("DOWNLOAD_FALLBACK_CDN_BASE_URL", "https://cdn.example.invalid")
 	context := downloadFallbackTestContext()
 
@@ -73,7 +78,10 @@ func testDownloadFallbackEnabledHandlerRejectsMissingSecret(t *testing.T) {
 	})
 	t.Setenv("DOWNLOAD_FALLBACK_ENABLED", "true")
 	t.Setenv("DOWNLOAD_FALLBACK_MODE", runtimecfg.DownloadFallbackModeProxy)
-	t.Setenv("DOWNLOAD_FALLBACK_TOKEN_SECRET", "")
+	setApplicationDownloadConfig(config.DownloadConfig{})
+	t.Cleanup(func() { setApplicationDownloadConfig(config.DownloadConfig{}) })
+	t.Setenv("DOWNLOAD_TOKEN_SECRET", strings.Repeat("C9", 20))
+	t.Setenv("DOWNLOAD_FALLBACK_TOKEN_SECRET", strings.Repeat("D8", 20))
 	t.Setenv("ADMIN_SESSION_SECRET", strings.Repeat("A7", 20))
 	if err := runtimecfg.Load(); err != nil {
 		t.Fatalf("load test runtime settings: %v", err)
@@ -95,6 +103,18 @@ func testDownloadFallbackEnabledHandlerRejectsMissingSecret(t *testing.T) {
 	}
 	if recorder.Code != http.StatusOK || envelope.Code == 0 || len(envelope.Data) != 0 {
 		t.Fatalf("missing-secret response = HTTP %d code %d data-present=%t", recorder.Code, envelope.Code, len(envelope.Data) != 0)
+	}
+}
+
+func TestDownloadFallbackSecretUsesOnlyCanonicalTypedConfig(t *testing.T) {
+	typedValue := strings.Repeat("T6", 20)
+	setApplicationDownloadConfig(config.DownloadConfig{TokenSecret: typedValue})
+	t.Cleanup(func() { setApplicationDownloadConfig(config.DownloadConfig{}) })
+	t.Setenv("DOWNLOAD_TOKEN_SECRET", strings.Repeat("C9", 20))
+	t.Setenv("DOWNLOAD_FALLBACK_TOKEN_SECRET", strings.Repeat("L8", 20))
+
+	if got := downloadFallbackTokenSecret(); got != typedValue {
+		t.Fatal("download fallback business logic did not use only canonical typed config")
 	}
 }
 

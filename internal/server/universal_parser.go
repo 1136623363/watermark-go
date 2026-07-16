@@ -5,8 +5,8 @@ import (
 	"net/url"
 	"strings"
 
-	universalparser "watermark-backend/internal/parsers/universal"
-	"watermark-backend/internal/runtimecfg"
+	universalparser "github.com/1136623363/watermark-go/internal/parsers/universal"
+	"github.com/1136623363/watermark-go/internal/runtimecfg"
 )
 
 func tryParseWithUniversalParser(rawURL string) (*parseResult, error) {

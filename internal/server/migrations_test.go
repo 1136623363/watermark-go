@@ -1,9 +1,43 @@
 package server
 
 import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/1136623363/watermark-go/internal/config"
 )
+
+func TestRunMigrationsInheritsCanceledProcessContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := RunMigrations(ctx, config.Config{MySQL: config.MySQLConfig{
+		DSN: "user:password@tcp(127.0.0.1:3306)/watermark",
+	}})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("RunMigrations() error = %v, want process cancellation", err)
+	}
+}
+
+func TestMigrationOneShotDoesNotOwnProcessOrDetachContext(t *testing.T) {
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate migration test source")
+	}
+	body, err := os.ReadFile(filepath.Join(filepath.Dir(currentFile), "migrations.go"))
+	if err != nil {
+		t.Fatalf("read migrations.go: %v", err)
+	}
+	for _, forbidden := range []string{"os.Exit(", "os.Args", "context.Background("} {
+		if strings.Contains(string(body), forbidden) {
+			t.Fatalf("migration one-shot retains forbidden process/context ownership: %s", forbidden)
+		}
+	}
+}
 
 func TestLoadMigrationsIncludesCoreTables(t *testing.T) {
 	records, err := loadMigrations()

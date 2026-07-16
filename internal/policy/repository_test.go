@@ -6,12 +6,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"go/parser"
+	"go/token"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -42,6 +45,70 @@ func TestRepositoryTrackedFilesExcludeSensitiveArtifactsAndRetiredPipelines(t *t
 		sort.Strings(forbidden)
 		t.Fatalf("forbidden files are tracked:\n%s", strings.Join(forbidden, "\n"))
 	}
+}
+
+func TestRepositoryUsesCanonicalModuleAndImportPrefix(t *testing.T) {
+	root := repositoryRoot(t)
+	moduleFile := readPolicyDocument(t, root, "go.mod")
+	if !strings.HasPrefix(moduleFile, "module github.com/1136623363/watermark-go\n") {
+		t.Fatal("go.mod does not use the canonical module path")
+	}
+	if !strings.Contains(moduleFile, "\ngo 1.24.0\n") || !strings.Contains(moduleFile, "\ntoolchain go1.26.5\n") {
+		t.Fatal("go.mod does not pin the required language and preferred toolchain versions")
+	}
+
+	output, err := exec.Command(
+		"git", "-C", root, "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", "*.go",
+	).Output()
+	if err != nil {
+		t.Fatalf("list tracked Go files: %v", err)
+	}
+	paths := make([]string, 0)
+	for _, path := range strings.Split(strings.TrimSuffix(string(output), "\x00"), "\x00") {
+		if path == "" {
+			continue
+		}
+		paths = append(paths, path)
+	}
+	legacyFiles, err := legacyModuleImportFiles(root, paths)
+	if err != nil {
+		t.Fatalf("scan repository Go imports: %v", err)
+	}
+	if len(legacyFiles) != 0 {
+		sanitized := make([]string, 0, len(legacyFiles))
+		for _, path := range legacyFiles {
+			sanitized = append(sanitized, sanitizedLabel(path))
+		}
+		t.Fatalf("repository retains legacy module imports: %s", strings.Join(sanitized, ", "))
+	}
+}
+
+func legacyModuleImportFiles(root string, paths []string) ([]string, error) {
+	legacyPrefix := "watermark-" + "backend/"
+	legacyFiles := make([]string, 0)
+	for index, path := range paths {
+		absolutePath := filepath.Join(root, path)
+		if _, err := os.Stat(absolutePath); errors.Is(err, os.ErrNotExist) {
+			continue
+		} else if err != nil {
+			return nil, fmt.Errorf("stat Go import candidate %d: %w", index, err)
+		}
+		parsed, err := parser.ParseFile(token.NewFileSet(), absolutePath, nil, parser.ImportsOnly)
+		if err != nil {
+			return nil, fmt.Errorf("parse Go import candidate %d: %w", index, err)
+		}
+		for _, spec := range parsed.Imports {
+			importPath, err := strconv.Unquote(spec.Path.Value)
+			if err != nil {
+				return nil, fmt.Errorf("decode Go import candidate %d: %w", index, err)
+			}
+			if strings.HasPrefix(importPath, legacyPrefix) {
+				legacyFiles = append(legacyFiles, path)
+				break
+			}
+		}
+	}
+	return legacyFiles, nil
 }
 
 func TestRepositoryTrackedWorkflowsExcludeJenkins(t *testing.T) {
@@ -185,7 +252,7 @@ func TestBaselineProvenanceSeparatesExternalDocumentFromCommittedCatalog(t *test
 	}
 	if provenance.SourceCommit != "1d3dc9a6064f3f2e41af9ea92a29566885939175" ||
 		provenance.SourceTree != "d1aac032059b5622fc9f0b5cd6ce321a77978a1e" ||
-		provenance.BaselineDocumentSourcePathAtCapture != "/srv/watermark/watermark-backend/测试结果基准.md" ||
+		provenance.BaselineDocumentSourcePathAtCapture != "/srv/watermark/watermark-"+"backend/测试结果基准.md" ||
 		provenance.BaselineDocumentTracked ||
 		provenance.BaselineDocumentBinding != "user-provided external acceptance baseline captured by content hash; not attributed to sourceCommit" ||
 		provenance.BaselineDocumentSHA256 != "a470a87e64242e5e97ee1a03571c43198a6bd7036c0b756e8c69fd9b639df29a" ||
@@ -1202,8 +1269,8 @@ func TestRepositoryPlanPinsComposeBindAllowlistAndCISelfLock(t *testing.T) {
 	plan := readPolicyDocument(t, root, "docs/superpowers/plans/2026-07-13-watermark-go-single-node-refactor.md")
 	task13 := policyDocumentSection(t, plan, "## 任务 13：", "## 任务 14：")
 	for _, required := range []string{
-		"API_BIND_ADDRESS", "API_HOST_PORT", "严格 allowlist", "127.0.0.1:15001",
-		"127.0.0.1:5001", "拒绝 `0.0.0.0`", "--schema-of-present", "--require-complete",
+		"RECOVERY_API_HOST_PORT", "CANDIDATE_API_HOST_PORT", "严格 allowlist", "127.0.0.1:15001",
+		"127.0.0.1:5001", "`0.0.0.0`", "--schema-of-present", "--require-complete",
 		"仅 final evidence push", "unit/schema-of-present", "docs/artifacts-only",
 	} {
 		if !strings.Contains(task13, required) {
@@ -1212,7 +1279,7 @@ func TestRepositoryPlanPinsComposeBindAllowlistAndCISelfLock(t *testing.T) {
 	}
 	task18 := policyDocumentSection(t, plan, "## 任务 18：", "")
 	for _, required := range []string{
-		"API_BIND_ADDRESS=127.0.0.1", "API_HOST_PORT=5001", "临时受限 LAN override",
+		"隐式固定 bind `127.0.0.1`", "CANDIDATE_API_HOST_PORT=5001", "Task 18 禁止启用 LAN override",
 	} {
 		if !strings.Contains(task18, required) {
 			t.Errorf("final runtime bind contract omits %q", required)
@@ -1302,7 +1369,7 @@ func TestRepositoryPlanDefinesASTNetworkAndCookiePolicyCommitBoundary(t *testing
 	task3 := policyDocumentSection(t, plan, "## 任务 3：", "## 任务 4：")
 	for _, required := range []string{
 		"const", "VarSpec", ":=", "scope-correct", "shadowing",
-		"git add internal/parser internal/policy/parser_cookie_security_test.go",
+		"git add -A -- internal/parsers internal/parser", "internal/policy/parser_egress_test.go",
 	} {
 		if !strings.Contains(task3, required) {
 			t.Errorf("parser Cookie gate or commit boundary omits %q", required)
@@ -1317,7 +1384,7 @@ func TestRepositoryPlanDefinesASTNetworkAndCookiePolicyCommitBoundary(t *testing
 		"internal/runtimecfg/settings.go", "internal/server/client_auth.go",
 		"internal/server/download_fallback.go", "internal/server/cluster.go",
 		"internal/server/cluster_platform_tests.go", "git diff --name-only",
-		"全部 staged", "git add internal/netguard internal/parser internal/runtimecfg/settings.go",
+		"全部 staged", "cmd/parser-helper", "cmd/netguard-proxy", "internal/parser/sandbox",
 	} {
 		if !strings.Contains(task4, required) {
 			t.Errorf("network egress gate or commit boundary omits %q", required)
@@ -1332,7 +1399,9 @@ func TestRepositoryPlanSeparatesReviewFixAndEvidenceCommits(t *testing.T) {
 	for _, required := range []string{
 		"must-fix 先写失败测试", "精确 implementation/test 路径", "禁止 `git add -A`",
 		"fix: address pre-release review findings", "重跑步骤 1–2", "独立 evidence commit",
-		"test: record local verification evidence",
+		"test: record local verification evidence", "tests/policy/test_python_bridge_security.py",
+		"scripts/verify-frontend-provenance.sh", "test_miniprogram_*.js",
+		"go test ./internal/policy", "git diff --cached --check", "scripts/verify-gitleaks.sh",
 	} {
 		if !strings.Contains(task, required) {
 			t.Errorf("review-fix/evidence commit contract omits %q", required)
@@ -1438,8 +1507,8 @@ func TestRepositoryPlanKeepsModuleAndParserMovesBuildable(t *testing.T) {
 		start, end string
 		required   []string
 	}{
-		{"## 任务 2：", "## 任务 3：", []string{"git grep -l", "watermark-backend/", "机械替换全部 tracked Go", "go mod tidy", "git grep -n", "go test ./...", "精确清单"}},
-		{"## 任务 3：", "## 任务 4：", []string{"所有 callsite", "internal/server", "git grep -n 'internal/parsers'", "go test ./...", "broken tree", "精确 callsite"}},
+		{"## 任务 2：", "## 任务 3：", []string{"git grep -l", "watermark-" + "backend/", "机械替换全部 tracked Go", "go mod tidy", "git grep -n", "go test ./...", "精确清单"}},
+		{"## 任务 3：", "## 任务 4：", []string{"production import 精确字面量", ":!internal/policy/**", "internal/server", "go test ./...", "broken tree", "精确 server callsite"}},
 	} {
 		section := policyDocumentSection(t, plan, tc.start, tc.end)
 		for _, required := range tc.required {
@@ -1605,7 +1674,8 @@ func TestRepositoryDocumentsDefineAbsentTwoStageRecoveryMode(t *testing.T) {
 	for _, required := range []string{
 		"rollbackMode=absent_two_stage", "baselineHTTPS=502", "恢复原 502 路由", "不得声称 5 分钟健康回滚",
 		"A shadow 隔离全验", "A 真实域名", "真微信", "A observation>=1800s", "才成为 recoveryDigest",
-		"A→B source diff allowlist", "release/promotion-marker.txt", "禁止 Go/依赖/Dockerfile/执行/config/migration/schema 变化",
+		"A→B source diff allowlist", "release/promotion-marker.txt", "禁止 Go/依赖/Dockerfile/执行/config/migration/schema",
+		"其他 tracked 文件变化",
 		"rootfs/app binary/tool versions/schema", "仅 OCI label 白名单差异", "B shadow 隔离全验",
 		"state-before.json 锁定 A/B digest+attestation+config/DB identity", "B→A 真实 drill",
 		"durationSeconds<=300", "rollbackMode", "不要求或伪造 legacy reverse",

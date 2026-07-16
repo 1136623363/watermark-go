@@ -12,7 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"watermark-backend/internal/parsers/native"
+	"github.com/1136623363/watermark-go/internal/parsers/native"
 )
 
 const (

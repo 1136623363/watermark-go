@@ -10,7 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
 
-	"watermark-backend/internal/runtimecfg"
+	"github.com/1136623363/watermark-go/internal/runtimecfg"
 )
 
 type memoryRateWindow struct {

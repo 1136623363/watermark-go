@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"watermark-backend/internal/runtimecfg"
+	"github.com/1136623363/watermark-go/internal/runtimecfg"
 )
 
 func TestRateLimitDisabledByDefault(t *testing.T) {

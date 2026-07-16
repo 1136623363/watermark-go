@@ -7,7 +7,7 @@ import (
 	"strings"
 	"sync"
 
-	"watermark-backend/internal/utils"
+	"github.com/1136623363/watermark-go/internal/utils"
 )
 
 // ParseVideoShareUrlByRegexp 将分享链接信息, 进行正则表达式匹配到分享链接后, 再解析视频信息

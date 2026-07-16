@@ -4,7 +4,7 @@ import (
 	"html/template"
 	"testing"
 
-	adminweb "watermark-backend/internal/admin/web"
+	adminweb "github.com/1136623363/watermark-go/internal/admin/web"
 )
 
 func TestEmbeddedTemplatesParse(t *testing.T) {

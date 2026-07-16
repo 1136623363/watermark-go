@@ -147,8 +147,20 @@ root 正常向前提交，禁止 fetch/恢复旧仓库 refs、旧对象或重写
 - 创建：`internal/config/config_test.go`
 - 创建：`internal/app/app.go`
 - 创建：`internal/app/app_test.go`
+- 创建：`internal/server/application_config.go`
+- 创建：`internal/server/service.go`
+- 创建：`internal/server/service_test.go`
+- 修改：`internal/server/infrastructure.go`
+- 修改：`internal/server/migrations.go`、`internal/server/migrations_test.go`（迁移改为最外层显式、可取消 one-shot，禁止组件
+  goroutine 调用 `os.Exit` 或使用脱离 process context 的 `context.Background`）
+- 创建：`internal/policy/module_import_policy_test.go`
+- 修改：`internal/server/main.go`、`internal/server/download_fallback.go` 及对应安全测试（只消费 typed config，
+  删除业务层旧/新下载密钥双读和入口内信号处理）
+- 修改：`internal/server/legacy_security_config.go` 并删除被 typed config 取代的
+  `internal/server/legacy_security_config_test.go`
+- 修改：步骤 4 精确扫描得到的全部 tracked Go import-prefix callsite
 
-- [ ] **步骤 1：编写生产配置失败测试**
+- [x] **步骤 1：编写生产配置失败测试**
 
 ```go
 func TestLoadProductionRejectsMissingShortAndPlaceholderSecrets(t *testing.T) {
@@ -245,13 +257,20 @@ func TestLoadSingleNodeDefaults(t *testing.T) {
 }
 ```
 
-- [ ] **步骤 2：运行配置测试并确认失败**
+同一步先写 `TestLoadRunnerConfigAtEnvironmentBoundary`、
+`TestLoadRunnerConfigDefaultsArePinnedAndSingleNodeSafe`、
+`TestLoadRejectsInvalidRunnerConfigWithoutEchoingValues`、
+`TestLoadKeepsMusicAndSohuCredentialsOpaque` 与
+`TestLoadRejectsInvalidSensitiveMusicConfigWithoutEchoingIt`；先确认缺少 typed Runner/Sohu 配置时失败，
+不能把这些测试推迟到 parser 迁移之后。
+
+- [x] **步骤 2：运行配置测试并确认失败**
 
 运行：`go test ./internal/config -count=1`
 
 预期：FAIL，`Load`/`Config` 尚不存在。
 
-- [ ] **步骤 3：实现 typed config 和 app 生命周期接口**
+- [x] **步骤 3：实现 typed config 和 app 生命周期接口**
 
 ```go
 type Config struct {
@@ -260,6 +279,7 @@ type Config struct {
     MySQL MySQLConfig
     Redis RedisConfig
     Parser ParserConfig
+    Runner RunnerConfig
     Tasks TaskConfig
     Download DownloadConfig
     Security SecurityConfig
@@ -269,6 +289,7 @@ type Config struct {
 type Component interface {
     Start(context.Context) error
     Stop(context.Context) error
+    Done() <-chan error // Start ready 后的唯一 terminal event；Stop 后也必须有界完成
 }
 ```
 
@@ -277,26 +298,50 @@ type Component interface {
 Redis 仍是可选的缓存/锁/限流组件并允许降级。production 同时要求非空且非占位的
 `WECHAT_MINI_APP_ID` 与满足强度/占位词门禁的 `WECHAT_MINI_APP_SECRET`，禁止退回 clientId 身份。
 `ParserConfig` 在配置边界读取可选 `WEIBO_COOKIE`、`XIGUA_COOKIE`；错误、弃用告警和配置摘要只记录
-字段是否配置，绝不记录 Cookie、DSN、secret 或其 URL 编码形式。parser 构造函数只接收
-`ParserConfig`，为任务 3 删除业务包中的环境变量读取建立唯一来源。
+字段是否配置，绝不记录 Cookie、DSN、secret 或其 URL 编码形式。环境配置只来自 `ParserConfig`；
+parser 构造函数接收一个 `Dependencies`，其中 `Config ParserConfig` 是唯一配置来源，其他字段只允许是
+受控 Fetcher/clock/token provider/logger 等运行依赖。这为任务 3 删除业务包中的环境变量读取建立唯一
+来源，同时避免把配置对象误当成完整依赖容器。
+
+`RunnerConfig` 同样只在本边界读取并校验 engine/fallback、yt-dlp binary+timeout，以及 universal 的
+Python binary、bridge script、video/music source、workdir、video/music timeout 和 item limit；默认 engine
+为 native、fallback 关闭，所有默认路径指向任务 13 固定进不可变镜像的绝对路径。music provider JSON
+与无法证明为公开协议标识的 Sohu token 使用不可直接格式化/序列化的 opaque sensitive value，只能经
+显式 consumer 取值；测试覆盖 `%v/%+v/%#v`、错误和 summary 均不回显。Task 3 的 Runner 还必须对
+production 重新验证 executable/source 位于镜像固定 allowlist、guard sandbox 已握手，否则 fail closed；
+typed config 不能被解释成允许动态下载、PATH 搜索或任意命令执行。
+这里的 typed music value 仅用于识别“配置存在”并安全迁移，**本轮 production 没有允许消费它的
+helper 路径**：任何依赖该 secret 的 universal/music descriptor 固定返回 `credential_required`/disabled，
+值不得进入 UDS/job/env/argv/log/output。Sohu token 只能由 API 进程内 native parser 的窄
+`TokenProvider` 显式消费，不能下发 helper。
 
 下载签名密钥只在 typed config 加载边界兼容旧名 `DOWNLOAD_FALLBACK_TOKEN_SECRET`：若规范名
 `DOWNLOAD_TOKEN_SECRET` 缺失则映射旧值并记录不含值的弃用告警；两者同时存在但不一致时启动失败。
 任务 2 之后所有业务代码只读取 `Config.Download.TokenSecret`，不得继续直接读取任一环境变量；任务 9
 删除旧名的运行时读取，部署样例只写规范名。这是唯一迁移窗口，不能形成双变量静默优先级。
 
-入口捕获 `SIGINT/SIGTERM`，设置 20 秒退出预算；配置加载失败时退出且不监听端口。
+入口捕获 `SIGINT/SIGTERM`，设置 20 秒退出预算；配置加载失败时退出且不监听端口。`Start` 只有在组件
+真正 ready 后才能返回；`App.Run` 同时等待 process context 与每个已启动组件的 `Done`，任一组件在
+ready 后异常退出必须保留原始错误、逆序停止其余组件并让进程非零退出，禁止 HTTP 已死但进程假活。
+startup cancellation 在 listener ready 前后都必须有界完成，不能在 cancel 后继续 bind/Serve 或无界等
+goroutine。红测至少覆盖 post-ready Serve failure、ready 前 cancel、ready 后 cancel、启动失败逆序清理
+与 Stop 幂等。
 
-- [ ] **步骤 4：重命名 module 与入口**
+旧迁移 argv 分支不能留在 server component：任务 2 即把它移到 `cmd/watermark-go` 最外层的显式
+one-shot command，注入 process context 并只返回 error；只有 `main` 可以决定 `os.Exit`。one-shot 不构造
+HTTP app/listener/worker，也不与 `ready/done` 竞争。任务 5 再把该命令扩展成绑定 receipt 的完整
+`data-gate`，不能以“后续会重构”为由提交当前竞态。
 
-模块名改为 `github.com/1136623363/watermark-go`，`go.mod` 使用 module language `go 1.24.0` 并固定首选 `toolchain go1.26.5`；入口只调用 `config.Load()`、`app.New()`、`Run()`。若宿主机尚无该工具链，任务 2 允许 Go 自动下载，或安装经过校验的官方 `go1.26.5` 归档；不得把“宿主机当前仍是 Go 1.24.4”误判为仓库策略失败。
+- [x] **步骤 4：重命名 module 与入口**
+
+模块名改为 `github.com/1136623363/watermark-go`，`go.mod` 使用 module language `go 1.24.0` 并固定首选 `toolchain go1.26.5`；入口只负责 `config.Load()`、显式 argv one-shot 分派以及 `app.New()`/`Run()`，不得包含路由或业务实现。若宿主机尚无该工具链，任务 2 允许 Go 自动下载，或安装经过校验的官方 `go1.26.5` 归档；不得把“宿主机当前仍是 Go 1.24.4”误判为仓库策略失败。
 
 同一步先用 `git grep -l '"watermark-backend/' -- '*.go'` 记录精确文件清单，再机械替换全部 tracked Go
 import prefix 为 `github.com/1136623363/watermark-go/`，执行 `go mod tidy`。替换后
 `git grep -n 'watermark-backend/' -- '*.go'` 必须零结果；不得只改 go.mod/cmd 后用 scoped tests 掩盖全树
 不可编译。机械修改的每个精确路径都纳入本任务 commit，提交前以 cached name list 对账。
 
-- [ ] **步骤 5：验证骨架**
+- [x] **步骤 5：验证骨架**
 
 运行：
 
@@ -307,10 +352,17 @@ GOMAXPROCS=2 go test ./... -count=1
 
 预期：全部 PASS。
 
-- [ ] **步骤 6：Commit**
+- [x] **步骤 6：Commit**
 
 ```bash
-git add go.mod go.sum cmd/watermark-go internal/config internal/app
+git add -- go.mod go.sum cmd/watermark-go internal/config internal/app \
+  internal/server/application_config.go internal/server/service.go internal/server/service_test.go \
+  internal/server/main.go internal/server/infrastructure.go \
+  internal/server/migrations.go internal/server/migrations_test.go \
+  internal/server/download_fallback.go internal/server/download_fallback_secret_test.go \
+  internal/server/security_defaults_test.go internal/server/legacy_security_config.go \
+  internal/server/legacy_security_config_test.go internal/policy/module_import_policy_test.go \
+  internal/policy/repository_test.go
 # 另按步骤 4 保存的精确清单逐个 git add -- 所有 import-prefix 机械修改文件
 git diff --cached --name-only
 git commit -m "refactor: add typed configuration and app lifecycle"
@@ -319,19 +371,46 @@ git commit -m "refactor: add typed configuration and app lifecycle"
 ## 任务 3：迁移解析器并消除源码凭据
 
 **文件：**
+- 创建：`internal/netguard/url.go`
+- 创建：`internal/netguard/validator.go`
+- 创建：`internal/netguard/transport.go`
+- 创建：`internal/netguard/validator_test.go`
 - 移动：`internal/parsers/native/*` → `internal/parser/native/*`
 - 移动：`internal/parsers/universal/*` → `internal/parser/universal/*`
 - 创建：`internal/parser/parser.go`
 - 创建：`internal/parser/descriptor.go`
+- 创建：`internal/parser/result.go`
+- 创建：`internal/parser/result_test.go`
 - 创建：`internal/parser/registry.go`
 - 创建：`internal/parser/registry_test.go`
+- 创建：`internal/parser/session_material.go`
+- 创建：`internal/parser/session_material_test.go`
+- 创建：`internal/parser/native/descriptors.go`
+- 创建：`internal/parser/native/structured_json_test.go`
+- 创建：`internal/parser/native/testdata/catalog.golden.json`（精确锁定现有 26 key、41 host rule、21 个
+  SupportsID、每项 capability 与 QueryKeys，不含研究项目未批准 alias）
+- 创建：`internal/parser/native/testdata/structured/`（Bilibili/快手的完整、转义、截断、字段换层、
+  登录/风控、空核心字段和多载体脱敏合成 fixture）
 - 创建：`internal/parser/native/testdata/`（脱敏合成 golden，不含 Cookie/token/个人信息/媒体本体）
 - 创建：`internal/parser/ytdlp/runner.go`
+- 创建：`internal/policy/parser_egress_test.go`（Task 3 先封 parser scope，Task 4 扩为全 production）
 - 修改：`internal/parser/native/weibo.go`
 - 修改：`internal/parser/native/xigua.go`
+- 修改：`internal/parser/native/sohu.go`（固定 API-key-like material 必须分类并移出源码或证明为公开协议标识）
+- 修改：`internal/parser/universal/bridge.go`
+- 修改：`internal/config/config.go`、`internal/app/app.go`（仅当 RunnerConfig/wiring 需要）
+- 修改：`go.mod`、`go.sum`（仅当 netguard/parser 依赖实际变化）
+- 重写：`docs/目录与解析器架构.md`（删除上游同步/热更新/可变 tools 叙述，改为 descriptor + pinned runner）
 - 修改：`internal/policy/parser_cookie_security_test.go`（迁移路径后继续覆盖 production parser）
-- 修改：所有由 `git grep -l 'internal/parsers' -- '*.go'` 精确发现的现有 callsite（含尚未拆除的
+- 修改：所有由 production import 精确字面量
+  `git grep -l '"github.com/1136623363/watermark-go/internal/parsers/' -- '*.go' ':!internal/policy/**'`
+  发现的现有 callsite（含尚未拆除的
   `internal/server`），同一 commit 改到 `internal/parser`；禁止留下破坏全树编译的旧 import
+
+**安全原子依赖：** Task 3 先实现 `internal/netguard` 的安全 core（typed URL、请求前/DNS/dial/redirect
+校验和受控 transport/Fetcher），再迁移任何 production parser；Task 4 在此基础上完成全树出口、
+subprocess proxy 与 AST/go-types 门禁。Task 3 不能提交任何临时裸 HTTP client/adapter，也不能先迁移
+parser、留待 Task 4 才修网络安全。
 
 - [ ] **步骤 1：编写 parser 契约和注册表失败测试**
 
@@ -340,26 +419,43 @@ type Parser interface {
     Parse(context.Context, Request) (Result, error)
 }
 
+type HostRule struct {
+    Host              string
+    IncludeSubdomains bool
+}
+
 type Descriptor struct {
-    Key PlatformKey // 稳定 ASCII ID；展示名不作内部主键
-    Domains, Aliases []string
+    Key          PlatformKey // 稳定 ASCII ID；展示名不作内部主键
+    DisplayName  string
+    Aliases      []PlatformKey
+    HostRules    []HostRule // 明确 exact host 或受控 subdomain，禁止 Contains
     Capabilities Capability
-    Priority int
-    QueryKeys []string
-    New func(Dependencies) Parser // 纯构造，不得联网/读环境/启动进程
+    Priority     int
+    QueryKeys    []string
+    SupportsID   bool
+    MaxRequests  int
+    MaxRedirects int
+    New          func(Dependencies) (Parser, error) // 纯构造，不联网/读环境/启动进程
 }
 
 func TestRegistryContainsLegacyNativePlatforms(t *testing.T) {
-    keys := NewRegistry(native.Parsers()).Platforms()
-    require.Subset(t, keys, []string{"douyin","kuaishou","bilibili","weibo","redbook","m3u8"})
+    registry, err := NewRegistry(native.Descriptors())
+    require.NoError(t, err)
+    got := registry.CatalogSnapshot()
+    want := mustReadCatalogGolden(t, "native/testdata/catalog.golden.json")
+    require.Equal(t, 26, len(got.Platforms))
+    require.Equal(t, 41, got.HostRuleCount())
+    require.Equal(t, 21, got.SupportsIDCount())
+    require.Equal(t, want, got)
 }
 
 func TestRegistryRejectsAmbiguousDescriptorMetadata(t *testing.T) {
     descriptors := []Descriptor{
-        {Key:"douyin", Domains:[]string{"v.example"}, Aliases:[]string{"dy"}},
-        {Key:"other", Domains:[]string{"v.example"}, Aliases:[]string{"dy"}},
+        {Key:"douyin", HostRules:[]HostRule{{Host:"v.example"}}, Aliases:[]PlatformKey{"dy"}},
+        {Key:"other", HostRules:[]HostRule{{Host:"v.example"}}, Aliases:[]PlatformKey{"dy"}},
     }
-    require.Error(t, NewRegistry(descriptors))
+    _, err := NewRegistry(descriptors)
+    require.Error(t, err)
 }
 
 func TestParserFetchesUpstreamOnceForRichMediaResult(t *testing.T) {
@@ -370,9 +466,18 @@ func TestParserFetchesUpstreamOnceForRichMediaResult(t *testing.T) {
     require.NotEmpty(t, got.AudioURL)
 }
 
+func TestSnapshotHonorsDescriptorRequestBudgetAndRejectsDuplicateURL(t *testing.T) {
+    parser := multiStageParser(Descriptor{MaxRequests: 3, MaxRedirects: 2})
+    _, err := parser.Parse(t.Context(), requestForFixture("bilibili"))
+    require.NoError(t, err)
+    assert.LessOrEqual(t, parser.fetcher.Calls(), 3)
+    require.ErrorIs(t, parser.fetcher.FetchAgain(sameFetchURL()), ErrDuplicateFetch)
+}
+
 func TestParserConstructionPerformsNoIO(t *testing.T) {
     deps := failingOnUseDependencies()
-    parser := descriptorFor("bilibili").New(deps)
+    parser, err := descriptorFor("bilibili").New(deps)
+    require.NoError(t, err)
     require.NotNil(t, parser)
     assert.Zero(t, deps.TotalCalls())
 }
@@ -384,27 +489,61 @@ func TestEveryProductionParserRejectsEmbeddedCookieHeaders(t *testing.T) {
 }
 ```
 
+同一步必须先写并确认以下命名红测失败，不能只用 registry 数量测试替代研究成果的行为闭环：
+
+- `TestDescriptorCapabilitiesMatchResult`：descriptor 声明的 video/gallery/audio/live-photo 与实际结果一致；
+- `TestRegistryRejectsUnknownHostWithTypedError`：未知 host 返回稳定 typed error，绝不猜测或 fallback；
+- `TestStructuredJSONGoldenMatrix`：覆盖 Bilibili/快手的完整、转义、截断、字段换层、登录/风控、
+  空核心字段与 INIT_STATE/Apollo 多载体，fixture 标记 `synthetic=true` 且不含真实会话/个人数据；
+- `TestMediaCandidateOrderIsStable` 与 `TestCandidateFallbackHonorsTotalBudget`：显式质量 comparator、稳定
+  tie-breaker、缺 metadata 时保留 parser 顺序，且候选切换共用总次数/总时限预算；
+- `TestScopedSessionMaterialInvalidatesOnlyOnTypedExpiry`：只有 typed `session_expired` 使 exact
+  platform+host 的短期材料失效并至多刷新一次，取消、超时、安全拒绝、`schema_changed`、
+  `credential_required` 与 internal error 都不能触发刷新风暴。
+
+`catalog.golden.json` 还要逐 descriptor 锁定 query policy，而非只锁总数。表格至少包含研究中已识别的
+`vid`、`id`、`xsec_token`、`modal_id`、`v`、`s`、`pid`，以及当前平台明确允许的其他 key；测试覆盖
+重复 key、大小写、空值、百分号编码、稳定排序和 tracking 剥离。会话/capability query 的原值或可逆
+编码不得进入日志、错误、`CacheKey`、fixture report 或 evidence。
+
 Cookie AST 门禁必须用对象绑定实现 scope-correct alias 解析：覆盖 package/local `const`、`VarSpec`、
 短声明 `:=`、多赋值、拼接和赋值传播，正确处理内层 shadowing，不能按变量名做跨作用域串联。恶意
 fixture 分别覆盖 const/var/:= alias 与 shadowing，安全 fixture 证明同名局部变量不会误报。
+同一步先写 parser-local AST/go-types 红测：`internal/parser`（含 generated production，只排 `_test.go` 和
+netguard adapter）不得自建 http/resty client/transport、用 DefaultClient/Get/Post/Head、直接 `net.Dial*`、
+调用 `os.Getenv`/`os.LookupEnv`/`os.Environ`，或绕过结构化 Runner 调用 `exec.Command*`。Task 4 把同一
+分析器扩到全 production tree；不能等 Task 4 才让 parser scope 首次安全。
+`m3u8` 不属于现有 26-platform native catalog，Task 3 不伪造对应 descriptor；它作为安全媒体合并能力由
+Task 9 在 Go 预取/本地 ffmpeg 门禁完成后注册路由与 capability。
 
 - [ ] **步骤 2：确认测试失败**
 
-运行：`go test ./internal/parser/... -count=1`
+运行：`go test ./internal/netguard ./internal/parser/... -count=1`
 
-预期：FAIL，包和接口尚未建立。
+预期：FAIL，netguard core、parser 包和接口尚未建立。
 
-- [ ] **步骤 3：机械迁移并适配 Parser 接口**
+- [ ] **步骤 3：先建立安全 core，再机械迁移并适配 Parser 接口**
+
+先实现 `internal/netguard` 的安全 core：不可日志化 `FetchURL`、允许持久化/响应的 `SafeURL`、请求前
+host/IP 校验、DNS/实际 dial 绑定、每跳 redirect 重验、跨 origin/host 敏感 header 剥离、TLS 强校验，
+以及带 response header/wire body/解压后 body/时长上限的受控 `Fetcher`。core 使用依赖注入 resolver/
+dialer 形成 hermetic 测试，禁止 production parser 自建 client/transport。Task 4 再补 subprocess egress
+proxy、全 production tree 出口迁移和 AST/go-types 封口；Task 3 不能提交任何临时裸 HTTP。
 
 保留固定提交中 URL/ID 解析、平台别名和字段行为；`redbook→xiaohongshu`、
 `quanminkge→kgqq`、`xigua→ixigua` 兼容在规范化层完成。native/universal/ytdlp 构造函数显式接收
-任务 2 的 `ParserConfig`；迁移完成后 `internal/parser` 内不得出现 `os.Getenv`/`os.LookupEnv`。
+一个 `Dependencies`；其中环境值只能来自任务 2 的 `Config ParserConfig`，其余是 netguard Fetcher、
+clock、token provider、logger/runner 接口。迁移完成后 `internal/parser` 内不得出现
+`os.Getenv`/`os.LookupEnv`。
 universal 与 yt-dlp 命令构造测试必须证明无法省略或覆盖任务 4 提供的 localhost netguard egress proxy。
 
 按 `docs/research/media-parser-review.md` 吸收其集中注册和富媒体能力思路，但不复制上游代码：注册表使用
 metadata-driven `Descriptor`，至少包含稳定 ASCII `PlatformKey`、display name、aliases、精确 domains、
 capabilities（video/gallery/audio/live-photo/m3u8）、确定性 priority、每平台允许保留的 query keys 与
 constructor。
+`catalog.golden.json` 必须与当前 26 platform key、41 host rule、21 个 ID 能力逐项完全相等；测试拒绝
+缺失、多出、重排后语义漂移或把 `media-parser` 的 50-domain 候选静默并入 production。研究 alias 只能
+经独立合法性、安全、契约和基准审查后由显式任务更新 golden，不能使用 `Subset` 放宽目录。
 构建 registry 时拒绝重复或歧义的 key/alias/domain、保持确定顺序并使用规范 host 精确匹配；研究项目的
 50 个 domain alias 只作候选目录，未经当前来源、canonical 93 样本或新增独立 fixture 验证不得进入
 production registry。`Result` 内部增加强类型 `ImageAsset{URL, LivePhotoURL}` 与
@@ -417,9 +556,40 @@ production registry。`Result` 内部增加强类型 `ImageAsset{URL, LivePhotoU
 需要从页面提取嵌入 JSON 时使用转义/嵌套感知实现，并以脱敏合成 golden 覆盖完整、截断、字段换层、
 登录/风控页、空核心字段和多载体分支，不保存真实响应中的会话/个人数据。
 
-移动前保存 `git grep -l 'internal/parsers' -- '*.go'` 的精确清单；移动后机械更新所有 callsite，并要求
-`git grep -n 'internal/parsers' -- '*.go'` 零结果。不得等 Task 11 删除旧 server 才修 import，也不得用
-scoped parser tests掩盖 broken tree。
+本轮采用受限 `SessionMaterialProvider`，不复用上游类级全局缓存：key 只由稳定 platform key + exact
+normalized host 组成，配置 TTL、singleflight 与硬容量上限，value 为不可格式化/不可序列化的敏感类型。
+仅 parser 返回 typed `session_expired` 时允许原子失效并在同一 Parse 总请求预算内刷新一次；timeout、
+context cancellation、security rejection、`schema_changed`、`credential_required`、internal error 或
+普通空结果均不得失效/重取。provider 没有源码常量 fallback，过期/驱逐/取消也不得把材料写入日志、
+错误、结果、普通 cache 或 evidence。`session_material_test.go` 对并发 singleflight、TTL、容量、exact-host
+隔离、一次刷新上限与所有不失效错误做 deterministic 测试。
+
+“一次上游快照”定义为每次 `Parse` 只调用一次平台 `AcquireSnapshot`，不是强迫每个平台只发一个 HTTP
+请求。多阶段 snapshot 可包含 descriptor `MaxRequests/MaxRedirects` 内的多个响应，但禁止重复抓同一
+FetchURL 或多个 getter 分别联网；单页 rich-media fixture 才断言物理 fetch=1，Bilibili/CCTV/短链等另测
+总请求/重定向预算、取消和重复 URL 拒绝。`DisplayName`、ID 能力和 host rules 只来自 registry snapshot，
+server/admin 不再保留第二份 `platformNames` 或导出的可变 `VideoSourceInfoMapping`。
+
+Task 2/3 的 typed `ParserConfig`/`RunnerConfig` 必须覆盖 engine/fallback、固定 binary/script/source/workdir、
+video/music timeout、item limit 与 opaque sensitive music config 引用；app 从 typed config 构造依赖，
+parser/runner 禁止回读 `runtimecfg` 或环境。`os.Environ` 同样禁止，subprocess env 从空集合构造最小 allowlist。
+Sohu 的固定 API-key-like query material 不得原样迁移：先以公开一手协议证据判定；无法证明时改为可选
+typed token provider，缺失返回 `credential_required`，错误/测试不回显值；provider 只注入 API 内 native
+Sohu adapter。opaque music config 非空时依赖它的 universal/music descriptor 仍必须 production disabled/
+`credential_required`，不得把值交给 Runner/helper。跨 UDS payload、helper env/argv、child env、日志、
+错误和 output 各注入独立 sentinel，逐层断言无原值或可逆编码。
+
+Task 3 尚未有 Task 4 的 network-isolated helper/proxy runtime。universal/yt-dlp runner constructor 在无
+已验证 `GuardProxy`/sandbox endpoint 时必须返回 error，production descriptors 保持 disabled；argv 只允许
+唯一、不可覆盖 proxy，env 不继承父进程。Task 4 完成 helper/proxy handshake 和隔离拓扑后才启用，禁止
+Task 3 在 API 内执行裸 subprocess 或把“disabled”冒充 fallback enabled。
+
+移动前保存上述 production import 精确字面量的清单；移动后机械更新所有 callsite，并要求同一命令零
+结果。`internal/policy/**` 必须继续把旧 `internal/parsers/` 路径作为 legacy history scanner 的兼容输入，
+因此禁止用全树 substring 零命中误删历史扫描分支或恶意 fixture。`docs/目录与解析器架构.md` 需同时重写，
+删除旧的运行时上游同步脚本、组件热更新、可变 `/app/tools`/yt-dlp 自动更新叙述，改为固定 provenance、
+descriptor registry、pinned bridge/runner 与 Actions-only immutable image 边界。不得等 Task 11 删除旧
+server 才修 import，也不得用 scoped parser tests掩盖 broken tree。
 
 - [ ] **步骤 4：保留并复验已前置完成的 Cookie 安全边界**
 
@@ -427,15 +597,18 @@ scoped parser tests掩盖 broken tree。
 本步骤迁移文件时必须保持空值不设置、trim 后注入的行为与回归测试。AST policy helper 同时接入仓库
 audit 的 history/index/worktree blob 扫描，路径兼容 `internal/parsers/` 与 `internal/parser/`；安全
 worktree 不能遮住 staged Cookie literal，测试/仓库默认不含 Cookie，也不得保留“取消注释恢复”说明。
+现有 live unit test 必须保留行为覆盖但改为 fake Fetcher + 脱敏 golden；`go test ./...` 不访问真实上游。
+测试不得打印派生 token、完整 URL/query 或上游响应。universal 从无测试状态补齐 constructor/env/output/
+timeout/process-group/Raw-field allowlist 覆盖；未知 `Raw map` 字段不得进入统一 Result、日志或响应。
 
 - [ ] **步骤 5：验证原生解析器回归**
 
 运行：
 
 ```bash
-GOMAXPROCS=2 go test ./internal/parser/... ./internal/policy -count=1
-if git grep -n 'os\.Getenv\|os\.LookupEnv' -- internal/parser; then exit 1; fi
-if git grep -n 'internal/parsers' -- '*.go'; then exit 1; fi
+GOMAXPROCS=2 go test ./internal/netguard ./internal/parser/... ./internal/policy -count=1
+if git grep -nE 'os\.(Getenv|LookupEnv|Environ)' -- internal/parser; then exit 1; fi
+if git grep -n '"github.com/1136623363/watermark-go/internal/parsers/' -- '*.go' ':!internal/policy/**'; then exit 1; fi
 GOMAXPROCS=2 go test ./... -count=1
 ```
 
@@ -444,9 +617,15 @@ GOMAXPROCS=2 go test ./... -count=1
 - [ ] **步骤 6：Commit**
 
 ```bash
-git add internal/parser internal/policy/parser_cookie_security_test.go
-# 逐个 git add -- 步骤 3 保存清单中的精确 callsite
-git rm -r internal/parsers
+# 同时 stage rename/delete/new；不要在 git mv 后再执行可能 pathspec 失败的 git rm。
+git add -A -- internal/parsers internal/parser
+git add -- internal/netguard internal/policy/parser_cookie_security_test.go \
+  internal/policy/parser_egress_test.go docs/目录与解析器架构.md
+# 逐个 git add -- 步骤 3 保存清单中的 7 个精确 server callsite；若 wiring/deps 变化再精确加入：
+git add -- internal/server/admin_handlers.go internal/server/admin_test_samples.go \
+  internal/server/admin_test_samples_test.go internal/server/main.go internal/server/parse_attempts.go \
+  internal/server/universal_parser.go internal/server/ytdlp.go
+# 条件清单：internal/app internal/config go.mod go.sum 只在本任务实际修改并审查后 stage。
 git diff --cached --name-only
 git commit -m "refactor: isolate parser adapters and remove embedded credentials"
 ```
@@ -454,22 +633,47 @@ git commit -m "refactor: isolate parser adapters and remove embedded credentials
 ## 任务 4：实现统一网络安全层
 
 **文件：**
-- 创建：`internal/netguard/url.go`
-- 创建：`internal/netguard/validator.go`
-- 创建：`internal/netguard/transport.go`
-- 创建：`internal/netguard/validator_test.go`
+- 修改：`internal/netguard/url.go`
+- 修改：`internal/netguard/validator.go`
+- 修改：`internal/netguard/transport.go`
+- 修改：`internal/netguard/validator_test.go`
+- 创建：`internal/netguard/proxy.go`
+- 创建：`internal/netguard/proxy_test.go`
+- 创建：`cmd/parser-helper/main.go`
+- 创建：`cmd/parser-helper/main_test.go`
+- 创建：`cmd/netguard-proxy/main.go`
+- 创建：`cmd/netguard-proxy/main_test.go`
+- 创建：`internal/parser/sandbox/client.go`
+- 创建：`internal/parser/sandbox/server.go`
+- 创建：`internal/parser/sandbox/sandbox_test.go`
 - 创建：`internal/policy/network_egress_test.go`
+- 创建：`tests/policy/test_python_bridge_security.py`
+- 修改：`bridges/universal/python/bridge.py`
 - 修改：`internal/parser/native/http_client.go`
+- 修改：`internal/parser/universal/bridge.go`
 - 修改：`internal/runtimecfg/settings.go`
 - 修改：`internal/server/client_auth.go`
 - 修改：`internal/server/download_fallback.go`
 - 修改：`internal/server/cluster.go`
 - 修改：`internal/server/cluster_platform_tests.go`
+- 修改：`internal/server/main.go`
+- 修改：`internal/server/ytdlp.go`
+- 修改：`internal/server/universal_parser.go`
+- 修改：`internal/server/m3u8_task.go`
+- 修改：`internal/server/tool_updates.go`
+- 修改：`internal/server/infrastructure.go`（仅 DB/Redis typed connector 的窄豁免，不得泛化为 HTTP/dial）
+
+任务 3 已提供 netguard core，Task 4 不得另建第二套 validator/transport；本任务把同一 core 扩展到
+全树出口、subprocess egress proxy、response/resource 完整矩阵和 AST/go-types 封口，并机械迁移全部
+production callsite。任何无法强制使用同一 guard 的网络路径在 production fail closed。
 
 - [ ] **步骤 1：编写 SSRF 表格测试**
 
 覆盖 `127.0.0.1`、`::1`、RFC1918、CGNAT、链路本地、metadata、十进制/八进制 IP、IDNA、大小写、
 尾点、userinfo、非常规端口、redirect loop、重定向到私网、DNS 首次公网随后私网，以及允许的公网地址。
+特殊地址矩阵还覆盖 benchmark/documentation/multicast/unspecified/reserved、IPv4-mapped IPv6、混合
+public/private DNS answer；DNS error/timeout/NXDOMAIN/空答案全部 fail closed。拒绝 opaque/scheme-relative/
+fragment/control/backslash/非法 escape/IPv6 zone/非法 bidi 或 joiner；端口按 purpose allowlist。
 另测跨 origin/host redirect 必须剥离 Cookie/Authorization/平台会话 header，response header、wire body、
 解压后 body 任一超限都拒绝；禁止盲目 HTTP→HTTPS 字符串改写和跳过 TLS 校验。
 
@@ -483,7 +687,9 @@ func TestDialContextRejectsResolvedPrivateTarget(t *testing.T) {
 ```
 
 同时先写 `internal/policy/network_egress_test.go` 红测。门禁对 `cmd/`、`internal/` 的 production Go
-（排除 `*_test.go`、生成文件和 `internal/netguard/`）执行 AST/go-types 分析，解析正常 import、
+只排除 `*_test.go`；generated production 同样扫描，`internal/netguard/` 也不得目录级豁免。validator/
+transport/proxy 仅对必要网络 primitive 使用对象绑定的精确文件+精确符号 allowlist，并有独立 self-audit，
+新增 `backdoor.go` 或在允许文件增加未列符号仍失败。其余代码执行 AST/go-types 分析，解析正常 import、
 import alias 与 dot import；在 netguard 外拒绝 `&http.Client`/`http.Client{}`、`http.Transport`、
 `http.DefaultClient`、`http.DefaultTransport`、`http.Get/Post/Head`、`net.Dial*`、`net.Dialer` 直建，
 第三方 client constructor（含 import alias/dot import 的 `resty.New`）未注入 netguard transport，
@@ -494,12 +700,21 @@ import alias 与 dot import；在 netguard 外拒绝 `&http.Client`/`http.Client
 同一 AST/go-types 门禁拒绝 production 中 `tls.Config{InsecureSkipVerify:true}`、可把验证后的目标替换为
 另一 host 的自定义 redirect hook，以及 parser 自行创建 client/transport；测试/fixture 也不得包含可被
 复制到 production 的固定会话或 tokenized URL。
+门禁必须由 AST 实际枚举全树出口并生成精确 callsite 清单，至少覆盖现存的 `server/main.go`、
+`server/ytdlp.go`、`parser/universal/bridge.go`、`server/universal_parser.go`、`server/m3u8_task.go`、
+`server/tool_updates.go` 和 `server/infrastructure.go`；文件表不是 allowlist，出现新出口也必须失败。
+DB/Redis 连接只可通过 typed DSN/config connector 的窄对象绑定豁免，不能使任意 `net.Dial` 或 HTTP
+逃逸。负测还要让 Python/第三方 helper 尝试 raw socket 直连，证明仅设置代理环境变量不能通过门禁。
+Go AST 之外，`tests/policy/test_python_bridge_security.py` 用 Python AST/结构化配置检查
+`bridges/universal/python/bridge.py`：删除任意 `requestOverride`/`requests_overrides`，禁止调用方覆盖
+proxies/verify/stream/redirect 或注入 session/header；最多允许 clamp 到更严格的 timeout/size。bridge
+源码与固定 hash 纳入 policy，直接 requests/socket/subprocess 新出口未走 sandbox adapter 即失败。
 
 - [ ] **步骤 2：确认失败**
 
 运行：`go test ./internal/netguard ./internal/policy -run 'TestDial|TestProductionNetworkEgress' -count=1`
 
-预期：FAIL，安全 transport 尚不存在。
+预期：FAIL，Task 3 的 core 已存在，但全树出口门禁、subprocess proxy 与剩余 callsite 尚未完成。
 
 - [ ] **步骤 3：实现请求前、重定向和 DialContext 三层校验**
 
@@ -507,17 +722,58 @@ import alias 与 dot import；在 netguard 外拒绝 `&http.Client`/`http.Client
 不可逆 `CacheKey`，避免普通 `String()` 意外输出完整敏感 query。不得通过字符串替换假设目标支持 TLS。
 所有业务 HTTP client 只能由 `netguard.NewTransport` 创建；代理地址显式配置，目标地址仍逐跳校验。
 resty 只能在 netguard adapter 内由已注入的受控 transport 构造，禁止默认 transport。
-另启动仅监听 loopback 的 netguard egress proxy：yt-dlp 强制 `--ignore-config --proxy "$NETGUARD_URL"`，并用
-空的临时 HOME/XDG 隔离用户配置；Python universal 子进程先清空大小写
+禁止替换全局 `http.DefaultClient/DefaultTransport`。DNS 预检不是证明：实际 DialContext 再解析全部结果、
+全部校验后只把已验证 literal IP 交给底层 dialer，原 canonical host 仅用于 Host/TLS SNI。ambient
+HTTP(S)_PROXY/ALL_PROXY/NO_PROXY 一律忽略；外部 HTTP/SOCKS proxy 只有在自身地址先验证且使用 pinned-IP
+CONNECT、不让远端重新解析目标时才可启用，`socks5h`/remote DNS 和 proxy userinfo 禁止进入普通配置、
+DB、日志或 0644 文件。
+Go native parser 在 API 进程内使用上述 transport。yt-dlp/universal 不在可直接访问外网的 API 进程
+启动：API 只通过 shared UDS 的有界、鉴权 job protocol 把任务交给 stateless、
+network-isolated `parser-helper`。helper 无业务 HTTP、公开端口、DB/Redis/运行秘密，只连接 Compose `internal: true` 的
+专用 parser sandbox network；同一 network 上只有 `egress-proxy` 能同时连接受控外网 network。
+`parser-helper` 的 raw socket 即使绕过代理设置也没有外网路由，只能到 netguard proxy；proxy 对每个目标
+执行同一校验。Task 13 对 recovery/candidate 两个可并存 role-set 分别验证 API/helper/proxy 使用该
+role 的同一不可变 digest，并验证 command/network/专属 UDS identity；两个 role-set 不得共享
+UDS/sandbox/proxy。无已验证 helper/proxy handshake 或隔离拓扑时 production fail closed，
+禁用 descriptor 不算 fallback enabled，不能静默回退到 API 内 subprocess。
+
+helper 内 yt-dlp 强制 `--ignore-config --proxy "$NETGUARD_URL"`，并用空的临时 HOME/XDG 隔离用户配置；
+Python universal 子进程先清空大小写
 `HTTP_PROXY/http_proxy`、`HTTPS_PROXY/https_proxy`、`ALL_PROXY/all_proxy`、
 `NO_PROXY/no_proxy`，再把大小写 HTTP(S)_PROXY/ALL_PROXY 设为唯一 netguard
-地址，并将 `NO_PROXY/no_proxy` 置空；proxy 对每次 CONNECT/请求和重定向
-重新解析并校验 DNS、剥离跨 origin/host 的敏感 header，限制响应头、wire/解压后 body 和时长。命令构造表格测试覆盖参数遗漏、重复 `--proxy`、环境覆盖
-和重定向/DNS rebinding。不能强制全部流量经过该 proxy 的工具在 production 配置加载时禁用，不能
-宣称只校验首跳 URL 就覆盖 subprocess 网络。
+地址，并将 `NO_PROXY/no_proxy` 置空。明确不做 TLS MITM：对 HTTPS CONNECT，proxy 只验证 authority、
+DNS、实际 dial、descriptor/job 允许的 host，并限制 tunnel wire bytes、并发与时长；它不能宣称可看到
+加密后的 redirect、header 或解压后 body。helper 不接收 Cookie/Authorization/平台凭据，credentialed
+platform 禁止走 universal；跨 origin header 只能由受控工具 hook 证明剥离，不能证明则该 descriptor 在
+production fail closed。解压资源由 instrumented fetch layer 加 helper container memory/CPU/PID/disk
+hard limits 和 UDS output limit 双重约束；第三方路径无法 instrument 时，超限只能隔离杀死 helper job，
+不得影响 API 或返回成功。plain HTTP 若允许，proxy 仍执行逐跳 header/body 门禁。
+命令构造表格测试覆盖参数遗漏、重复 `--proxy`、环境覆盖和重定向/DNS rebinding。不能强制全部流量经过
+该 proxy 的工具在 production 配置加载时禁用，不能宣称只校验首跳 URL 就覆盖 subprocess 网络。
 
-ffmpeg 不联网：任务 9 由 Go 通过 netguard 预取 manifest、子清单和全部分片并重写成本地清单；
-ffmpeg protocol whitelist 只保留实际需要的本地 `file`，拒绝 `http/https/tcp/tls/crypto/concat/data`。
+Task 4 的 hermetic sandbox 测试启动 helper/proxy 拓扑模拟器：正常代理请求可达 fake public upstream；
+raw socket、显式 IP、替代 DNS、代理变量覆盖和直接 HTTP client 都不可达；UDS payload/response 有大小、
+超时、并发、身份和取消门禁。Compose 的真实 `internal: true`/network membership/runtime inspect 由
+Task 13 policy 与 CI integration 再证明；二者缺一都不能启用 production fallback。
+同一步实现固定 `parser-helper healthcheck` 与 `netguard-proxy healthcheck` 子命令：前者只验证本组 UDS
+主进程 handshake/policy fingerprint，后者只验证本容器 loopback listener、policy fingerprint 和 resolver/
+dialer self-test fixture；二者不加载/格式化任何平台/API/DB secret、不访问公网、不使用业务 job，不因
+另一 role 健康而通过。红测覆盖主进程缺失、错 role/run/digest、cross-role socket、外网探测企图和
+sentinel 泄漏；Task 13 只能引用这两个已在 Task 4 全树测试中存在的命令。
+
+同一任务立即关闭尚待 Task 11 删除的旧出口：cluster health/test、跨节点 `/api/download/node` 和任何
+worker dispatch 固定返回 disabled/404 且不发网络；runtime pip/git source/tool updater 删除或 production
+hard-disable，不进入 subprocess allowlist。微信交换只允许固定官方 HTTPS host、零 redirect、零外部
+proxy、严格 body max+1；fallback origin 使用 exact/label-boundary HostRule、手工 redirect 与 streaming
+字节/idle limit，禁止 `strings.Contains` host、跨 origin Referer/Origin/header 和无界 `io.Copy`。
+`targetForLog`、unsupported error 与所有 URL parse failure 只记录 purpose/stage/host hash，绝不回退输出
+原始 URL/path/query 或 child stderr。
+
+ffmpeg 不联网：Task 4 在 Task 9 的安全预取尚未实现前先 hard-disable 所有把远程 URL/manifest 交给
+ffmpeg 的 production 路径，并以测试证明 argv/protocol whitelist 只允许本地 `file`。对应 m3u8 merge
+暂时返回固定 typed unavailable，不得保留远程 fallback。任务 9 再由 Go 通过 netguard 预取 manifest、
+子清单和全部分片并重写成本地清单后恢复功能；始终拒绝
+`http/https/tcp/tls/crypto/concat/data`。
 
 - [ ] **步骤 4：验证所有网络路径未绕过**
 
@@ -525,22 +781,33 @@ ffmpeg protocol whitelist 只保留实际需要的本地 `file`，拒绝 `http/h
 
 ```bash
 go test ./internal/netguard ./internal/parser/... ./internal/policy -run 'TestDial|TestProductionNetworkEgress' -count=1
+python3 -m pytest tests/policy/test_python_bridge_security.py -q
+GOMAXPROCS=2 go test ./... -count=1
 git grep -n -- '--proxy\|HTTP_PROXY\|HTTPS_PROXY\|NO_PROXY' internal/parser
 ```
 
-预期：测试 PASS；AST/go-types 门禁对全 production tree 证明没有未迁移出口，grep 只命中统一、
+预期：测试 PASS；全树编译覆盖 cmd helper/proxy、server/runtimecfg 和 parser；AST/go-types/Python 门禁对
+全 production tree 证明没有未迁移出口，grep 只命中统一、
 不可覆盖的 egress proxy 构造器与对应测试。以门禁报告的精确 callsite 清单和 `git diff --name-only`
 双重核对本任务修改面，不能靠手写的少数 grep 猜测完整性。
 
 - [ ] **步骤 5：Commit**
 
 ```bash
-git add internal/netguard internal/parser internal/runtimecfg/settings.go \
+# 依据 AST 门禁保存的精确 callsite 清单逐个 stage；下面是当前已知必需路径，出现新出口须追加。
+git add -- cmd/parser-helper cmd/netguard-proxy internal/netguard internal/parser/sandbox \
+  internal/parser/native/http_client.go internal/parser/universal/bridge.go \
+  internal/runtimecfg/settings.go internal/policy/network_egress_test.go \
+  bridges/universal/python/bridge.py tests/policy/test_python_bridge_security.py \
   internal/server/client_auth.go internal/server/download_fallback.go internal/server/cluster.go \
-  internal/server/cluster_platform_tests.go internal/policy/network_egress_test.go
-test -z "$(git diff --name-only -- internal/netguard internal/parser internal/runtimecfg/settings.go \
-  internal/server/client_auth.go internal/server/download_fallback.go internal/server/cluster.go \
-  internal/server/cluster_platform_tests.go internal/policy/network_egress_test.go)"
+  internal/server/cluster_platform_tests.go internal/server/main.go internal/server/ytdlp.go \
+  internal/server/universal_parser.go internal/server/m3u8_task.go internal/server/tool_updates.go \
+  internal/server/infrastructure.go
+# 用保存的 AST 清单逐项对账 staged/worktree；任一发现路径仍 unstaged 即失败。
+test -z "$(git diff --name-only -- \
+  cmd/parser-helper cmd/netguard-proxy internal/netguard internal/parser/sandbox \
+  internal/parser/native/http_client.go internal/parser/universal/bridge.go internal/runtimecfg/settings.go \
+  internal/policy/network_egress_test.go internal/server)"
 git diff --cached --name-only
 git commit -m "feat: guard all outbound network targets"
 ```
@@ -560,11 +827,21 @@ git commit -m "feat: guard all outbound network targets"
 - 创建：`internal/store/legacy_import_test.go`
 - 创建：`internal/store/legacy_delta.go`
 - 创建：`internal/store/legacy_delta_test.go`
+- 创建：`internal/store/gate_receipt.go`
+- 创建：`internal/store/gate_receipt_test.go`
 - 创建：`tests/integration/store/migration_test.go`（CI/Task 17 integration profile，禁止本地主机隐式启动）
 - 创建：`internal/cache/cache.go`
 - 创建：`internal/cache/redis.go`
 - 创建：`internal/cache/memory.go`
 - 创建：`internal/cache/cache_test.go`
+- 修改：`cmd/watermark-go/main.go`、`cmd/watermark-go/main_test.go`（显式 `serve`/`data-gate`/
+  `healthcheck api`
+  子命令；未知或缺少 production command fail closed）
+- 修改：`internal/config/config.go`、`internal/config/config_test.go`（`data-gate` 只加载最小 migration
+  配置，不读取或接收 API/admin/微信/下载/parser secret）
+- 修改：`internal/app/app.go`、`internal/app/app_test.go`（`serve` 在构造/启动任何 component 前验证本次
+  gate receipt）
+- 修改：`internal/server/service.go`（删除 server 内根据 argv 自动迁移的路径，listener 只由 `serve` 启动）
 
 - [ ] **步骤 1：编写迁移幂等和 Redis 降级测试**
 
@@ -580,7 +857,54 @@ func TestCacheFallsBackWhenRedisUnavailable(t *testing.T) {
     require.NoError(t, c.Set(t.Context(), "k", []byte("v"), time.Minute))
     assert.Equal(t, []byte("v"), mustGet(t, c, "k"))
 }
+
+func TestDataGateNeverConstructsApplicationOrListener(t *testing.T) {
+    result := runCommand(t.Context(), []string{"data-gate"}, commandFakes{
+        Gate: successfulGate(),
+        NewApplication: func(config.Config) (applicationRunner, error) {
+            t.Fatal("data-gate constructed the serving application")
+            return nil, nil
+        },
+    })
+    require.NoError(t, result)
+}
+
+func TestServeRejectsStaleOrMismatchedGateReceiptBeforeStartingComponents(t *testing.T) {
+    receipt := validReceiptFor("recovery", digestA(), "run-current", finalDBIdentity())
+    for _, mutate := range receiptMismatchCases() {
+        started := atomic.Bool{}
+        err := startServeWithReceipt(mutate(receipt), func() { started.Store(true) })
+        require.Error(t, err)
+        assert.False(t, started.Load())
+    }
+}
+
+func TestAPIHealthcheckIsLocalSecretFreeAndReceiptBound(t *testing.T) {
+    probe := newLocalAPIProbe(validReceiptForCurrentRole())
+    require.NoError(t, runHealthcheck(t.Context(), "api", probe))
+    assert.Zero(t, probe.ExternalCalls())
+    assert.NotContains(t, probe.CapturedOutput(), secretSentinel())
+}
+
+func TestRevalidateGateIsReadOnly(t *testing.T) {
+    store := mutationFailingStoreWithStableFinalFixture()
+    receipt, err := RunDataGate(t.Context(), GateRequest{Mode: GateRevalidate}, store)
+    require.NoError(t, err)
+    assert.Zero(t, store.DDLCalls()+store.ImportCalls()+store.ScrubCalls())
+    require.True(t, receipt.Passed)
+}
 ```
+
+缓存层同时先写以下命名红测：
+
+- `TestCacheKeyBindsPlatformResourceParserAndSchemaVersion` 与 `TestCacheVersionChangeMisses`，证明 key 精确
+  绑定稳定 platform、canonical resource digest、parserVersion、resultSchemaVersion，任一版本变化自动 miss；
+- `TestCacheSingleflightCoalescesSameKey`，证明相同 key 并发只执行一次 parser，同时不同 key 不互相阻塞；
+- `TestNegativeCachePolicyRejectsNonCacheableErrors`，证明 context cancellation、internal、
+  `credential_required`、`schema_changed`、security rejection 和短期 session 失效均不写负缓存，只有稳定
+  typed failure 写 180 秒负缓存，force refresh 同时绕过正负缓存；
+- `TestRedisAndMemoryShareCacheSemantics`，证明 Redis/内存使用同一 key/version/TTL/容量与敏感 query
+  摘要语义，格式化输出不含 query/capability/session 原值或可逆编码。
 
 另以脱敏 fixture 验证旧表映射、重复导入幂等、每表行数与稳定业务字段校验和；导入失败必须保持
 目标事务未提交，并生成不含行内容的核对 manifest。迁移测试先记录 engine/version/capabilities 和
@@ -599,6 +923,19 @@ services/profile 与 Task 17 已 pull 的隔离 migration profile 运行；CI se
 cluster/worker/auto-update；proxy userinfo、Cookie/token/password/secret 及嵌套 musicdl 配置不得进入
 新 DB、API、日志、manifest 或 artifact，失败消息只报字段分类而不回显 sentinel。
 
+同一步对 `GateReceipt` 做 table-driven 负测：role（recovery/candidate）、data stage（shadow/final）、
+完整 image digest、deploymentRunId/gateAttemptId、schema version、target DB/Redis/outbox identity、input
+snapshot hash、config hash、完成时间和 passed 必须全部匹配；旧 run、另一 role/digest/DB、失败/过期/
+截断 receipt 均在构造 app、listener、worker 前拒绝。receipt 由 `data-gate` 经 0600 temp、file fsync、
+rename、directory fsync 原子写入本组专属 volume，API 只读挂载；不能用 Compose 的
+`depends_on` 退出码代替内容绑定。
+部署脚本每次 shadow/final/drill/cutover/rollback 都必须先以当前 run/attempt 执行
+`docker compose up --force-recreate --no-deps data-gate-${role}`（或经过 tests/ops 证明语义完全相同的
+固定封装），等待本次容器退出 0，再核验新 receipt 的容器 start time/run/digest/data identity，随后才
+启动该 role 的 API/helper/proxy。上一次已成功退出的 gate 容器或仅满足
+`depends_on: service_completed_successfully` 一律视为 stale；负测证明不 force-recreate、旧 receipt、容器
+启动时间早于 attempt、以及 API 先行都会非零失败。
+
 - [ ] **步骤 2：确认失败**
 
 运行：`go test ./internal/store ./internal/cache -count=1`
@@ -609,6 +946,18 @@ cluster/worker/auto-update；proxy userinfo、Cookie/token/password/secret 及�
 
 从旧迁移保留结果、尝试、session、设置、样本、平台运行、任务、管理员和审计；
 任务表增加 `locked_by/locked_until/next_attempt_at` 与索引。生产不使用本地 JSON 作为权威配置。
+
+同时把入口分成固定 `watermark-go serve`、one-shot `watermark-go data-gate` 与
+`watermark-go healthcheck api`。healthcheck 只探测本容器 loopback API 并核对 role/digest/run/gate
+identity，不加载/输出 secret、不访问外网。`data-gate` 只加载最小
+migration config。`GATE_MODE=apply` 才可顺序执行 schema migration（含二次幂等验证）、typed import、
+scrub、count/checksum 和 mode-specific no-writer/position gate；`GATE_MODE=revalidate` 必须使用只读
+凭据，只核对已有 schema version、稳定字段 checksum、accepted-write/outbox 坐标、DB/Redis namespace
+identity 与 config hash，任何 DDL/import/scrub/write 调用都由类型化接口和 DB privilege 双重拒绝。
+任一步失败非零退出且写本 attempt 的 failed receipt；它绝不
+构造 HTTP app、监听端口、启动 worker/helper 或加入 egress。`serve` 不再隐式执行迁移；它必须先读取
+本 role 专属 receipt，并与外部 runtime inspect 提供的实际 RepoDigest、当前 run/config/data identity
+交叉验证，成功后才构造任何 component。production 缺显式 subcommand 或使用未知 subcommand 立即失败。
 
 - [ ] **步骤 4：实现源 MariaDB 到目标 MySQL 的兼容导入**
 
@@ -654,7 +1003,12 @@ force refresh 同时绕过正/负缓存，Redis 与内存实现共享相同 key/
 
 - [ ] **步骤 6：验证**
 
-运行：`GOMAXPROCS=2 go test ./internal/store ./internal/cache -count=1`
+运行：
+
+```bash
+GOMAXPROCS=2 go test ./internal/store ./internal/cache ./internal/app ./cmd/watermark-go -count=1
+GOMAXPROCS=2 go test ./... -count=1
+```
 
 预期：全部 PASS。
 
@@ -669,7 +1023,9 @@ go test -tags=integration ./tests/integration/store -count=1
 - [ ] **步骤 7：Commit**
 
 ```bash
-git add migrations internal/store internal/cache tests/integration/store
+git add migrations internal/store internal/cache tests/integration/store \
+  cmd/watermark-go/main.go cmd/watermark-go/main_test.go internal/config internal/app \
+  internal/server/service.go
 git commit -m "refactor: add durable stores and degradable cache"
 ```
 
@@ -689,6 +1045,9 @@ git commit -m "refactor: add durable stores and degradable cache"
 transport/status/body/JSON/业务拒绝错误只能产生固定脱敏响应与固定分类日志，以及上游错误中即使
 含完整 query URL、登录 code 和应用密钥也不得出现在响应/日志。微信身份 metadata 只允许保存
 `programType`、openid 绑定所需字段和 unionid，明确断言不含 `session_key`、其 camelCase 变体或值。
+增加 `TestClientSessionSecretsNeverReachParserDependencies`：微信 `session_key`、client token、openid、
+登录 code 与应用密钥不能进入 parser `Dependencies`、Fetcher header、普通 parse cache 或 parser upstream
+session material；客户端 session 与 Task 3 的平台短期材料是两个互不转换、互不共享 key-space 的边界。
 
 ```go
 func TestInvalidTokenUsesFrontendRefreshContract(t *testing.T) {
@@ -767,6 +1126,12 @@ func TestCanonicalURLKeepsOnlyDescriptorQueryKeys(t *testing.T) {
     assert.NotContains(t, got.LogFields, "42")
 }
 
+func TestCanonicalURLQueryPolicyMatrix(t *testing.T) {
+    // 每个平台的 catalog QueryKeys 是唯一 authority；覆盖 vid/id/xsec_token/modal_id/v/s/pid、
+    // 重复 key、大小写、空值、百分号编码、稳定排序和 tracking 剥离。
+    requireQueryPolicyGolden(t, mustLoadDescriptorCatalog())
+}
+
 func TestNormalizeLivePhotoKeepsLegacyImagesShape(t *testing.T) {
     got := Normalize(Result{Images: []ImageAsset{{URL:"https://cdn.example/a.jpg",
         LivePhotoURL:"https://cdn.example/a.mp4"}}})
@@ -777,7 +1142,12 @@ func TestNormalizeLivePhotoKeepsLegacyImagesShape(t *testing.T) {
 
 - [ ] **步骤 2：确认失败**
 
-运行：`go test ./internal/parse ./internal/httpapi -run 'TestNormalize|TestForceRefresh|TestParseContract' -count=1`
+运行：
+
+```bash
+go test ./internal/parse ./internal/httpapi \
+  -run 'TestNormalize|TestForceRefresh|TestCanonicalURL|TestCacheKey|TestNegativeCache|TestParseContract' -count=1
+```
 
 预期：FAIL。
 
@@ -899,8 +1269,12 @@ git commit -m "feat: add durable asynchronous parse tasks"
 - 创建：`internal/download/service_test.go`
 - 创建：`internal/media/m3u8.go`
 - 创建：`internal/media/m3u8_test.go`
+- 创建：`internal/media/dash.go`
+- 创建：`internal/media/dash_test.go`
 - 创建：`internal/httpapi/download_handlers.go`
 - 创建：`internal/httpapi/download_contract_test.go`
+- 修改：`internal/policy/network_egress_test.go`（把本地-only ffmpeg 固定 argv builder 加入精确符号清单，
+  并拒绝任何 remote protocol/动态 executable；不得按目录豁免 `internal/media`）
 
 - [ ] **步骤 1：编写大小、并发、Range、TTL、SSRF 和前端状态测试**
 
@@ -913,6 +1287,14 @@ git commit -m "feat: add durable asynchronous parse tasks"
 绝对/`..` 路径以及 `file/concat/data/crypto/http` 等重写后协议注入。
 另测 DASH 音视频合并只能作为持久异步媒体任务执行；任务内下载子任务最多并行 2，context 取消/超时、
 worker lease 丢失或 ffmpeg 失败都必须杀死进程组、清理部分文件且不得返回成功。
+`TestDASHCandidateOrderAndFallbackBudget` 必须证明 DASH 消费 Task 3 的稳定 comparator，不把数组下标当质量；
+首候选失败后仅在统一总预算内切换，每个 fallback 候选仍逐项经过 netguard、协议、大小、媒体类型和
+重复 URL 门禁，任何单候选错误都不能形成无限重试。文件系统负测还覆盖受控临时根权限 `0700`、
+`.part`/最终临时媒体权限 `0600`、symlink/path traversal 拒绝，以及成功、失败、取消、lease 丢失后
+均无越界或遗留部分文件。
+Task 4 的全树 network/subprocess self-audit 必须先因新增 ffmpeg sink 红灯；只对
+`internal/media/m3u8.go` 中经过类型检查的精确本地 argv-builder/runner 符号做最小 allowlist。恶意 fixture
+证明同目录新 `exec.Command*`、动态 executable、remote URL 或扩大 protocol whitelist 仍被拒绝。
 
 同一行为测试锁定 canonical route-auth inventory：fallback create 可保持匿名兼容，但必须同时满足
 attempt/limit/SSRF（`attempt>=4`、限流/并发/大小门禁与 netguard）。cache shareId 与 parse poll 使用
@@ -925,7 +1307,7 @@ attempt/limit/SSRF（`attempt>=4`、限流/并发/大小门禁与 netguard）。
 
 - [ ] **步骤 2：确认失败**
 
-运行：`go test ./internal/download ./internal/media ./internal/httpapi -run 'TestDownload|TestM3U8' -count=1`
+运行：`go test ./internal/download ./internal/media ./internal/httpapi -run 'TestDownload|TestM3U8|TestDASH' -count=1`
 
 预期：FAIL。
 
@@ -933,7 +1315,8 @@ attempt/limit/SSRF（`attempt>=4`、限流/并发/大小门禁与 netguard）。
 
 ticket 使用独立 `DOWNLOAD_TOKEN_SECRET` 的 HMAC-SHA256，不能回退到管理员 session secret，绑定非空
 task ID、过期时间和用途；文件名由服务生成，禁止路径穿越。
-所有临时文件先写 `.part`，校验长度和媒体类型后原子重命名，TTL 清理不删除运行中任务。
+所有临时根由服务创建为 `0700`，临时与最终任务文件固定 `0600` 且拒绝 symlink；文件先写 `.part`，
+校验长度和媒体类型后 fsync + 原子重命名，TTL 清理不删除运行中任务，失败/取消/lease 丢失必须清理。
 
 - [ ] **步骤 4：实现 m3u8 安全合并**
 
@@ -941,17 +1324,33 @@ Go 通过 netguard 预取并验证 manifest、有限层级子清单和全部分�
 字节；拒绝加密、私网目标、绝对路径、`..` 和 `file/concat/data/crypto`。每个资源写入受控临时根内由
 服务生成的文件名，重写后的本地清单只引用这些文件。ffmpeg 仅启用本地 `file` protocol whitelist，
 不得解析任何远程 URL；120 秒超时后杀死进程组并删除部分文件。
+本步骤在上述预取/本地化门禁通过后恢复 Task 4 暂时 hard-disable 的 m3u8 merge，并将其注册为 media
+capability/route，而不是伪装成 native platform descriptor。
+
+DASH 同样有明确 owner：`internal/media/dash.go` 只接受规范化阶段已验证的一组 video/audio
+`MediaCandidate`，由 Go netguard 分别以有界并发 2、独立/累计字节和 idle/total deadline 预取到受控
+临时根，完整 hash/media-type 校验成功后才调用 ffmpeg。ffmpeg argv 只含服务生成的本地 file path，
+固定 executable、`-protocol_whitelist file`，不接收 manifest/
+remote URL/shell；lease/context 取消杀整个进程组并清理 `.part`。DASH 只能走持久异步任务，不能阻塞
+同步 parse handler。对应 `TestDASH*` 和 network policy 精确 symbol 与 m3u8 同 commit，禁止留下无 owner
+的验收声明。
 
 - [ ] **步骤 5：注册兼容接口并验证**
 
-运行：`GOMAXPROCS=2 go test ./internal/download ./internal/media ./internal/httpapi -count=1`
+运行：
+
+```bash
+GOMAXPROCS=2 go test ./internal/download ./internal/media ./internal/httpapi ./internal/policy -count=1
+GOMAXPROCS=2 go test ./... -count=1
+```
 
 预期：全部 PASS；任务成功响应兼容 `status:"done", url:"..."` 和 fallback `completed/downloadUrl`。
 
 - [ ] **步骤 6：Commit**
 
 ```bash
-git add internal/download internal/media internal/httpapi/download_handlers.go internal/httpapi/download_contract_test.go
+git add internal/download internal/media internal/httpapi/download_handlers.go \
+  internal/httpapi/download_contract_test.go internal/policy/network_egress_test.go
 git commit -m "feat: add bounded download and m3u8 tasks"
 ```
 
@@ -966,6 +1365,8 @@ git commit -m "feat: add bounded download and m3u8 tasks"
 - 创建：`internal/httpapi/admin_handlers.go`
 - 创建：`internal/httpapi/admin_contract_test.go`
 - 创建：`tests/baseline/fixtures/platform-samples.json`
+- 可选创建：`tests/research/media-parser/manifest.json` 与其独立、脱敏候选 fixture（仅当本任务实际取得合法
+  样本；否则明确记录 `coverage clue not adopted`，不得生成空壳证据）
 - 读取、验证并更新：`docs/baseline-provenance.json`（仅在 Task 10 生成 fixture 并独立审查后写入 trust anchor）
 
 - [ ] **步骤 1：编写后台认证、RBAC 和批次口径测试**
@@ -1013,12 +1414,19 @@ trust anchor，禁止写入 fixture 自身造成自引用。fixture 当前尚未
 
 `docs/research/media-parser-provenance.json` 与其 50-domain 目录不得参与上述 trust anchor 计算，也不得
 替换、启用或删除任何 canonical 样本。若为评估新平台创建 `tests/research/media-parser/`，只能使用独立
-合法取得且脱敏的合成/候选 fixture，并明确 `productionEnabled=false`；只有单独变更同时通过 descriptor
+合法取得且脱敏的合成/候选 fixture；`manifest.json` 必须记录独立合法来源、license/consent、脱敏状态、
+hash 与 `productionEnabled=false`，并证明该路径/内容不参与 baseline fixture/hash。若没有这种候选，
+Task 10 evidence 必须写 `coverage clue not adopted`，不能把上游 50-domain 线索计作已支持平台。只有单独变更同时通过 descriptor
 唯一性、URL/netguard、资源门禁、当前 API 契约和稳定性测试后，候选才能进入 production registry。
 
 - [ ] **步骤 5：验证**
 
-运行：`GOMAXPROCS=2 go test ./internal/admin ./internal/httpapi -count=1`
+运行：
+
+```bash
+GOMAXPROCS=2 go test ./internal/admin ./internal/httpapi -count=1
+GOMAXPROCS=2 go test ./internal/parser/... ./internal/policy -count=1
+```
 
 预期：全部 PASS。
 
@@ -1027,6 +1435,8 @@ trust anchor，禁止写入 fixture 自身造成自引用。fixture 当前尚未
 ```bash
 git add internal/admin internal/httpapi/admin_handlers.go internal/httpapi/admin_contract_test.go \
   tests/baseline docs/baseline-provenance.json
+# 仅当实际生成并审查候选时，精确加入 tests/research/media-parser/manifest.json 与 manifest 列出的文件；
+# 否则不得创建或暂存该目录。
 git commit -m "refactor: add single-node admin and baseline runner"
 ```
 
@@ -1048,6 +1458,8 @@ git commit -m "refactor: add single-node admin and baseline runner"
 - 删除：`docs/集群化部署方案.md`
 - 移动：`docs/多节点解析性能排查与优化.md` → `docs/archive/多节点解析性能排查与优化.md`
 - 修改：`internal/admin/web/templates/index.html`（删除节点/cluster UI）
+- 修改：`internal/policy/network_egress_test.go` 及所有路径绑定的 parser/network policy（删除
+  `internal/server`/`internal/runtimecfg` 前先让 stale allowlist 自审计失败，再迁移到新精确 owner）
 
 - [ ] **步骤 1：编写 route inventory、request ID、CORS 和超时测试**
 
@@ -1113,6 +1525,8 @@ Cookie/token、上游 body/error 不得写入日志。指标按相同低基数�
 
 ```bash
 GOMAXPROCS=2 go test ./internal/httpapi ./internal/observability ./internal/app -count=1
+GOMAXPROCS=2 go test ./internal/policy -count=1
+GOMAXPROCS=2 go test ./... -count=1
 if git grep -niE 'cluster|jenkins|集群|worker endpoint' -- \
   cmd internal deploy scripts README.md tests/README.md docs \
   ':!internal/policy/**' ':!docs/archive/**' ':!docs/superpowers/**' ':!docs/requirements-traceability.md'; then exit 1; fi
@@ -1128,7 +1542,7 @@ test ! -e scripts/sync-universal-parser.ps1
 - [ ] **步骤 7：Commit**
 
 ```bash
-git add internal/httpapi internal/observability internal/app
+git add internal/httpapi internal/observability internal/app internal/policy
 git rm -r internal/server internal/runtimecfg docs/集群化部署方案.md
 git add internal/admin/web/templates/index.html docs/archive README.md tests/README.md
 git commit -m "refactor: compose single-node HTTP application"
@@ -1159,6 +1573,10 @@ fallback 双响应形态、m3u8 done/error、绝对同域 HTTPS downloadUrl。
 `imageAssets` 仅为可选加法字段；Live Photo 的静态/动态 URL 配对索引稳定且两者都通过 media/netguard
 校验，audio 仍投影到现有 `music/mp3/audioUrl` aliases。未知客户端忽略 `imageAssets` 时视频/图集流程
 不得改变。
+`TestMediaParserIntegrationContract` 还把 registry golden、structured JSON golden、query policy、
+candidate ranking/有界 fallback、cache/version/negative semantics、rich-media 兼容投影与 unsafe-pattern
+policy 聚合为一个 hermetic contract result；其 machine section 名固定为 `mediaParserIntegration`，供
+Actions 与最终 verifier 绑定同一 source commit/image digest，而不是靠人工说明宣称研究融合完成。
 负向契约明确拒绝把研究项目的 `POST {text}`、`retcode/retdesc/succ` 或成功业务码 `200` 注册成公开
 协议；权威仍是固定前端的 `url/source/timestamp/version` 输入和 `code=0/msg/data/requestId` envelope。
 修改现有 E2E 断言：`/api/download/node` 必须 404/不存在，health/admin summary 不再要求 node/cluster；
@@ -1224,6 +1642,8 @@ git commit -m "test: lock current mini program API behavior"
 - 创建：`deploy/compose.yml`
 - 创建：`deploy/env.example`
 - 创建：`deploy/image-lock.json`
+- 创建：`deploy/migration/source-dump.sh`
+- 创建：`deploy/migration/restore-clone.sh`
 - 创建：`release/promotion-marker.txt`
 - 修改：`.dockerignore`（promotion marker 不进入 rootfs）
 - 创建：`.github/workflows/ci-image.yml`
@@ -1240,9 +1660,20 @@ videodl/musicdl commit、非 root。policy 还锁定运行层包与源码绑定�
 workflow 无 Jenkins、执行 tests、启用 provenance/SBOM 并推送 GHCR。policy 枚举所有 workflow
 `uses:`，要求带版本注释的精确 40 位 commit SHA，并拒绝 tag/branch、`pull_request_target`、checkout
 持久化凭据和超出 job 所需的 permissions。
-可复现负向测试还要用两个模拟 revision 构建相同批准输入，比较 canonical rootfs inventory 与 app hash；
+可复现负向测试还要只在 GitHub Actions runner 用两个模拟 revision 构建相同批准输入，比较 canonical
+rootfs inventory 与 app hash；当前目标服务器绝不运行 Docker/Buildx 镜像构建；
 若 Go VCS/buildid/time、ldflags commit/time、Python `.pyc` 或可变生成元数据进入 rootfs 必须失败，只有
 OCI config 中明确 allowlist 的 revision label 可不同。
+Compose policy 还必须证明 recovery 与 candidate 两个 role-set 可同时存在：每组的 API、
+`parser-helper`、`egress-proxy`、`data-gate` 使用该组同一不可变 digest，而 A/B 两组允许且在 promotion 后
+要求不同 digest；每组有专属 UDS volume、`internal: true` parser sandbox、proxy、gate receipt 和运行/
+数据 identity，禁止跨组共享或串线。helper 只连本组 sandbox 和 UDS，无公开端口且不得连接 MySQL/
+Redis；本组 proxy 是该 sandbox 唯一双网成员。`data-gate` 只连 data network，使用最小 DB 配置，固定
+one-shot command、无 API/worker/listener/UDS/egress/API secrets，成功 receipt 必须绑定 role、digest、
+deployment run、schema/DB identity 与输入 hash，API 启动时重验。所有命令固定为镜像内 allowlist
+entrypoint。负向配置覆盖 A/B 共用 UDS/sandbox/proxy/receipt、helper 加入外网/data network、proxy
+加入 DB network、gate 加入 egress/拿到 API secret、暴露端口、组内不同镜像、host network、额外 DNS/
+volume/socket 或绕过 runtime inspect/receipt，任一都失败。
 同时锁定 `scripts/verify-gitleaks.sh` 的版本、官方 URL、归档 SHA-256、`set -euo pipefail`、0700
 临时目录、0600 扫描日志、EXIT/signal trap 清理和 `--log-opts=--all`；脚本只能输出 PASS/FAIL 与
 退出码，不能输出 finding、路径、ref 名或字面量。workflow、任务 15 和任务 16 必须调用同一脚本。
@@ -1265,7 +1696,10 @@ yt-dlp/videodl/musicdl 版本。ffmpeg 精确包版本必须来自固定日期�
 包版本或制品 hash 均写入 `deploy/image-lock.json`，policy 要求非空、格式合法且与 Dockerfile 一致。
 镜像写入 `org.opencontainers.image.revision`（完整 `GITHUB_SHA`）和
 `org.opencontainers.image.source`（固定新仓库 URL）OCI label。创建 UID 10001，只让 `/app/cache`、
-`/app/logs`、`/app/tmp`、`/app/tools` 可写，加入镜像 healthcheck。精确路径
+`/app/logs`、`/app/tmp` 可写；`/app/tools` 与全部解析工具、Python 依赖随 rootfs 固定且运行时只读，
+任何 pip/git/yt-dlp 自更新或替换工具文件都必须失败。Dockerfile 不设置会被所有 role 继承的通用 HTTP
+`HEALTHCHECK`；Compose 必须逐服务配置 API HTTP+gate identity、helper UDS handshake、proxy self-check，
+one-shot data-gate 禁用轮询 healthcheck 并只以 exit+receipt 判定。精确路径
 `release/promotion-marker.txt` 只用于 B promotion 的 source commit/workflow trigger，必须由
 `.dockerignore` 排除，Dockerfile 不得 COPY 进 rootfs；policy 验证 marker 不影响 app binary、工具或
 运行配置。
@@ -1280,34 +1714,375 @@ rootfs 差异。
 
 ```yaml
 services:
-  api:
-    image: ${BACKEND_IMAGE:?set BACKEND_IMAGE to ghcr registry digest}
-    ports: ["${API_BIND_ADDRESS:-127.0.0.1}:${API_HOST_PORT:-15001}:5001"]
+  data-gate-recovery:
+    profiles: ["recovery"]
+    image: ${RECOVERY_IMAGE:?set verified A registry digest}
+    command: ["/app/bin/watermark-go", "data-gate"]
+    environment:
+      DEPLOY_ROLE: recovery
+      DEPLOY_STAGE: ${RECOVERY_DATA_STAGE:?shadow or final}
+      EXPECTED_IMAGE_DIGEST: ${RECOVERY_IMAGE}
+      DEPLOYMENT_RUN_ID: ${DEPLOYMENT_RUN_ID:?current run}
+      GATE_ATTEMPT_ID: ${RECOVERY_GATE_ATTEMPT_ID:?current gate attempt}
+      GATE_MODE: ${RECOVERY_GATE_MODE:?apply or revalidate}
+      MIGRATION_SOURCE_DSN: ${RECOVERY_MIGRATION_SOURCE_DSN:?clone DSN}
+      MYSQL_DSN: ${RECOVERY_MIGRATION_TARGET_DSN:?least-privilege migrator DSN}
+      REDIS_NAMESPACE: ${RECOVERY_REDIS_NAMESPACE:?role-stage namespace}
+    networks: ["data"]
+    volumes: ["gate-receipt-recovery:/run/watermark-gate"]
+    read_only: true
+    restart: "no"
+    healthcheck: {disable: true}
+    # 只注入本次 source/target DB 与 gate identity；无 API secret、端口、worker、UDS 或 egress。
+  api-recovery:
+    profiles: ["recovery"]
+    image: ${RECOVERY_IMAGE:?same verified A registry digest}
+    command: ["/app/bin/watermark-go", "serve"]
+    environment:
+      APP_ENV: production
+      PORT: "5001"
+      DEPLOY_ROLE: recovery
+      DEPLOY_STAGE: ${RECOVERY_DATA_STAGE:?shadow or final}
+      EXPECTED_IMAGE_DIGEST: ${RECOVERY_IMAGE}
+      DEPLOYMENT_RUN_ID: ${DEPLOYMENT_RUN_ID:?current run}
+      MYSQL_DSN: ${RECOVERY_MYSQL_DSN:?role target DSN}
+      REDIS_ADDR: ${RECOVERY_REDIS_ADDR:?role Redis identity}
+      REDIS_NAMESPACE: ${RECOVERY_REDIS_NAMESPACE:?role-stage namespace}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?required}
+      ADMIN_SESSION_SECRET: ${ADMIN_SESSION_SECRET:?required}
+      DOWNLOAD_TOKEN_SECRET: ${DOWNLOAD_TOKEN_SECRET:?required}
+      WECHAT_MINI_APP_ID: ${WECHAT_MINI_APP_ID:?required}
+      WECHAT_MINI_APP_SECRET: ${WECHAT_MINI_APP_SECRET:?required}
+      WEIBO_COOKIE: ${WEIBO_COOKIE:-}
+      XIGUA_COOKIE: ${XIGUA_COOKIE:-}
+      SOHU_API_KEY: ${SOHU_API_KEY:-}
+    ports: ["127.0.0.1:${RECOVERY_API_HOST_PORT:-5001}:5001"]
+    networks: ["data", "egress"]
     mem_limit: 2g
     cpus: 2.0
+    volumes:
+      - "parser-ipc-recovery:/run/watermark-parser"
+      - "gate-receipt-recovery:/run/watermark-gate:ro"
+      - "app-cache-recovery:/app/cache"
+      - "app-logs-recovery:/app/logs"
+    read_only: true
+    pids_limit: 256
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: ["/app/tmp:size=268435456,mode=0700,uid=10001,gid=10001,nodev,nosuid,noexec"]
+    healthcheck:
+      test: ["CMD", "/app/bin/watermark-go", "healthcheck", "api"]
+    depends_on:
+      data-gate-recovery: {condition: service_completed_successfully}
+  parser-helper-recovery:
+    profiles: ["recovery"]
+    image: ${RECOVERY_IMAGE:?same verified A registry digest}
+    command: ["/app/bin/parser-helper"]
+    environment:
+      DEPLOY_ROLE: recovery
+      DEPLOY_STAGE: ${RECOVERY_DATA_STAGE:?shadow or final}
+      EXPECTED_IMAGE_DIGEST: ${RECOVERY_IMAGE}
+      DEPLOYMENT_RUN_ID: ${DEPLOYMENT_RUN_ID:?current run}
+    networks: ["parser_sandbox_recovery"]
+    volumes: ["parser-ipc-recovery:/run/watermark-parser"]
+    read_only: true
+    mem_limit: 1g
+    cpus: 1.5
+    pids_limit: 64
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: ["/app/tmp:size=536870912,mode=0700,uid=10001,gid=10001,nodev,nosuid,noexec"]
+    healthcheck:
+      test: ["CMD", "/app/bin/parser-helper", "healthcheck"]
+    # 无公开端口、无 DB/Redis network/DSN/secret。
+  egress-proxy-recovery:
+    profiles: ["recovery"]
+    image: ${RECOVERY_IMAGE:?same verified A registry digest}
+    command: ["/app/bin/netguard-proxy"]
+    environment:
+      DEPLOY_ROLE: recovery
+      EXPECTED_IMAGE_DIGEST: ${RECOVERY_IMAGE}
+      DEPLOYMENT_RUN_ID: ${DEPLOYMENT_RUN_ID:?current run}
+    networks: ["parser_sandbox_recovery", "egress"]
+    read_only: true
+    mem_limit: 256m
+    cpus: 0.5
+    pids_limit: 32
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD", "/app/bin/netguard-proxy", "healthcheck"]
+    # 无公开端口、不得连接 MySQL/Redis。
+
+  data-gate-candidate:
+    profiles: ["candidate"]
+    image: ${CANDIDATE_IMAGE:?set verified B registry digest}
+    command: ["/app/bin/watermark-go", "data-gate"]
+    environment:
+      DEPLOY_ROLE: candidate
+      DEPLOY_STAGE: ${CANDIDATE_STAGE:?disabled, shadow, drill or final}
+      EXPECTED_IMAGE_DIGEST: ${CANDIDATE_IMAGE}
+      DEPLOYMENT_RUN_ID: ${DEPLOYMENT_RUN_ID:?current run}
+      GATE_ATTEMPT_ID: ${CANDIDATE_GATE_ATTEMPT_ID:?current gate attempt}
+      GATE_MODE: ${CANDIDATE_GATE_MODE:?apply or revalidate}
+      MIGRATION_SOURCE_DSN: ${CANDIDATE_MIGRATION_SOURCE_DSN:?clone or revalidate source}
+      MYSQL_DSN: ${CANDIDATE_MIGRATION_TARGET_DSN:?least-privilege migrator DSN}
+      REDIS_NAMESPACE: ${CANDIDATE_REDIS_NAMESPACE:?role-stage namespace}
+    networks: ["data"]
+    volumes: ["gate-receipt-candidate:/run/watermark-gate"]
+    read_only: true
+    restart: "no"
+    healthcheck: {disable: true}
+  api-candidate:
+    profiles: ["candidate"]
+    image: ${CANDIDATE_IMAGE:?same verified B registry digest}
+    command: ["/app/bin/watermark-go", "serve"]
+    environment:
+      APP_ENV: production
+      PORT: "5001"
+      DEPLOY_ROLE: candidate
+      DEPLOY_STAGE: ${CANDIDATE_STAGE:?disabled, shadow, drill or final}
+      EXPECTED_IMAGE_DIGEST: ${CANDIDATE_IMAGE}
+      DEPLOYMENT_RUN_ID: ${DEPLOYMENT_RUN_ID:?current run}
+      MYSQL_DSN: ${CANDIDATE_MYSQL_DSN:?role target DSN}
+      REDIS_ADDR: ${CANDIDATE_REDIS_ADDR:?role Redis identity}
+      REDIS_NAMESPACE: ${CANDIDATE_REDIS_NAMESPACE:?role-stage namespace}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?required}
+      ADMIN_SESSION_SECRET: ${ADMIN_SESSION_SECRET:?required}
+      DOWNLOAD_TOKEN_SECRET: ${DOWNLOAD_TOKEN_SECRET:?required}
+      WECHAT_MINI_APP_ID: ${WECHAT_MINI_APP_ID:?required}
+      WECHAT_MINI_APP_SECRET: ${WECHAT_MINI_APP_SECRET:?required}
+      WEIBO_COOKIE: ${WEIBO_COOKIE:-}
+      XIGUA_COOKIE: ${XIGUA_COOKIE:-}
+      SOHU_API_KEY: ${SOHU_API_KEY:-}
+    ports: ["127.0.0.1:${CANDIDATE_API_HOST_PORT:-15001}:5001"]
+    networks: ["data", "egress"]
+    mem_limit: 2g
+    cpus: 2.0
+    volumes:
+      - "parser-ipc-candidate:/run/watermark-parser"
+      - "gate-receipt-candidate:/run/watermark-gate:ro"
+      - "app-cache-candidate:/app/cache"
+      - "app-logs-candidate:/app/logs"
+    read_only: true
+    pids_limit: 256
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: ["/app/tmp:size=268435456,mode=0700,uid=10001,gid=10001,nodev,nosuid,noexec"]
+    healthcheck:
+      test: ["CMD", "/app/bin/watermark-go", "healthcheck", "api"]
+    depends_on:
+      data-gate-candidate: {condition: service_completed_successfully}
+  parser-helper-candidate:
+    profiles: ["candidate"]
+    image: ${CANDIDATE_IMAGE:?same verified B registry digest}
+    command: ["/app/bin/parser-helper"]
+    environment:
+      DEPLOY_ROLE: candidate
+      DEPLOY_STAGE: ${CANDIDATE_STAGE:?disabled, shadow, drill or final}
+      EXPECTED_IMAGE_DIGEST: ${CANDIDATE_IMAGE}
+      DEPLOYMENT_RUN_ID: ${DEPLOYMENT_RUN_ID:?current run}
+    networks: ["parser_sandbox_candidate"]
+    volumes: ["parser-ipc-candidate:/run/watermark-parser"]
+    read_only: true
+    mem_limit: 1g
+    cpus: 1.5
+    pids_limit: 64
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: ["/app/tmp:size=536870912,mode=0700,uid=10001,gid=10001,nodev,nosuid,noexec"]
+    healthcheck:
+      test: ["CMD", "/app/bin/parser-helper", "healthcheck"]
+  egress-proxy-candidate:
+    profiles: ["candidate"]
+    image: ${CANDIDATE_IMAGE:?same verified B registry digest}
+    command: ["/app/bin/netguard-proxy"]
+    environment:
+      DEPLOY_ROLE: candidate
+      DEPLOY_STAGE: ${CANDIDATE_STAGE:?disabled, shadow, drill or final}
+      EXPECTED_IMAGE_DIGEST: ${CANDIDATE_IMAGE}
+      DEPLOYMENT_RUN_ID: ${DEPLOYMENT_RUN_ID:?current run}
+    networks: ["parser_sandbox_candidate", "egress"]
+    read_only: true
+    mem_limit: 256m
+    cpus: 0.5
+    pids_limit: 32
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD", "/app/bin/netguard-proxy", "healthcheck"]
+
+  source-mariadb-dump:
+    profiles: ["migration-tools"]
+    image: ${MARIADB_RECOVERY_IMAGE:?set pinned recovery-tool digest}
+    entrypoint: ["/usr/local/bin/source-dump"]
+    command: []
+    network_mode: "none"
+    read_only: true
+    restart: "no"
+    volumes:
+      - type: bind
+        source: /run/mysqld/mysqld.sock
+        target: /run/source/mariadb.sock
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${SOURCE_MARIADB_DEFAULTS_FILE:?0600 temporary file}
+        target: /run/secrets/source.cnf
+        read_only: true
+        bind: {create_host_path: false}
+      - "migration-backup:/backup"
+      - type: bind
+        source: ./deploy/migration/source-dump.sh
+        target: /usr/local/bin/source-dump
+        read_only: true
+        bind: {create_host_path: false}
+    # 只经已纳入 host-before allowlist 的 Unix socket读取源库；绝不挂源数据目录。
+  mariadb-clone:
+    profiles: ["migration-tools"]
+    image: ${MARIADB_RECOVERY_IMAGE:?same pinned recovery-tool digest}
+    environment:
+      MARIADB_DATABASE: watermark_source_clone
+      MARIADB_ROOT_PASSWORD: ${MARIADB_CLONE_ROOT_PASSWORD:?temporary clone secret}
+    networks: ["data"]
+    volumes: ["mariadb-clone-data:/var/lib/mysql"]
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+    # 无 host port；凭据只来自 migration-tools 专属临时 secret。
+  restore-mariadb-clone:
+    profiles: ["migration-tools"]
+    image: ${MARIADB_RECOVERY_IMAGE:?same pinned recovery-tool digest}
+    entrypoint: ["/usr/local/bin/restore-clone"]
+    command: []
+    networks: ["data"]
+    read_only: true
+    restart: "no"
+    volumes:
+      - "migration-backup:/backup:ro"
+      - type: bind
+        source: ${MARIADB_CLONE_DEFAULTS_FILE:?0600 temporary file}
+        target: /run/secrets/clone.cnf
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ./deploy/migration/restore-clone.sh
+        target: /usr/local/bin/restore-clone
+        read_only: true
+        bind: {create_host_path: false}
+    depends_on:
+      mariadb-clone: {condition: service_healthy}
+    # 只把备份恢复到 data network 内的隔离 MariaDB clone，无 host network/host port。
+
   mysql:
     image: ${MYSQL_IMAGE:?set pinned mysql registry digest}
+    environment:
+      MYSQL_DATABASE: watermark_control
+      MYSQL_USER: watermark
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?application DB secret}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?bootstrap/migrator secret}
+    networks: ["data"]
+    volumes:
+      - type: bind
+        source: /var/lib/watermark-go/data/mysql
+        target: /var/lib/mysql
+        bind: {create_host_path: false}
     mem_limit: 1g
   redis:
     image: ${REDIS_IMAGE:?set pinned redis registry digest}
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec", "--save", "900", "1", "--protected-mode", "no"]
+    networks: ["data"]
+    volumes:
+      - type: bind
+        source: /var/lib/watermark-go/data/redis
+        target: /data
+        bind: {create_host_path: false}
     mem_limit: 256m
+networks:
+  data:
+    internal: true
+  parser_sandbox_recovery:
+    internal: true
+  parser_sandbox_candidate:
+    internal: true
+  egress: {}
+volumes:
+  parser-ipc-recovery: {}
+  parser-ipc-candidate: {}
+  gate-receipt-recovery: {}
+  gate-receipt-candidate: {}
+  app-cache-recovery: {}
+  app-cache-candidate: {}
+  app-logs-recovery: {}
+  app-logs-candidate: {}
+  migration-backup: {}
+  mariadb-clone-data: {}
 ```
 
-`API_BIND_ADDRESS`/`API_HOST_PORT` 使用严格 allowlist：默认和 shadow 只允许 `127.0.0.1:15001`，final
-只允许 `127.0.0.1:5001`；preflight 拒绝任何其他组合，尤其拒绝 `0.0.0.0`、空地址、其他端口或把
-final 配成 LAN。可选 LAN 只能通过独立、临时受限 override profile，在宿主防火墙已验证来源 allowlist
-后启用并在测试后立即撤销，不得写入仓库外正式 runtime file。
+`docker compose --env-file` 只负责插值，不会自动注入容器；实际 Compose 必须像上表一样逐键列出每个
+service 的环境 allowlist，禁止 service-level `env_file:` 或把整份 runtime environment 传入。API 只拿
+本 role 当前 data identity 与 typed API/parser/native secret；data-gate 只拿 clone/target DSN、run/gate/
+receipt identity；helper/proxy 只拿非秘密 role/stage/digest/run/UDS/proxy 配置，绝不拿 DB/Redis、微信、
+admin、download、Cookie/Sohu/music provider secret。B shadow 的 candidate variables 必须指向专属 shadow
+schema/Redis/outbox，不能出现 A/final sentinel。policy 为每组注入唯一 sentinel，runtime inspect 验证
+允许的 key 集与 configured 状态，并断言 helper/proxy/job payload/env/argv/log/output 无原值。
+Compose config/hash 若含插值秘密，只能写到 0700 目录内的 0600 temp，生成 secret-keyed redacted hash 后
+立即删除；终端和 artifact 不得输出渲染内容或 `docker inspect` 的 Env values。
 
-Compose profiles 分离 `shadow`、`final`、`recovery` 与 `migration-tools`：shadow API 连接独立
-DB/schema、独立 Redis namespace 和独立卷；final production DB/Redis 与 shadow 物理或逻辑隔离；
-`migration-tools` 只包含由 `MARIADB_RECOVERY_IMAGE` 指向官方 digest 的 MariaDB recovery image，
-不发布端口、不以裸 `docker run` 启动。policy 检查 profile、网络、卷、数据库 identity 和运行变量，
-防止 shadow/rehearsal 服务误连 final 数据面。
+`source-dump.sh`/`restore-clone.sh` 是经 policy 固定 hash/argv 审计的无参数 wrapper：`set -Eeuo
+pipefail`、`umask 077`，数据库与表只来自 tracked allowlist；source dump 固定
+`--defaults-extra-file=/run/secrets/source.cnf --socket=/run/source/mariadb.sock --single-transaction --quick
+--skip-lock-tables --hex-blob`，写 `source.sql.part` 后 fsync、生成固定文件名 SHA-256 manifest、原子 rename
+和 directory fsync。restore 在读任何 SQL 前复算固定 manifest/hash，只用
+`--defaults-extra-file=/run/secrets/clone.cnf --host=mariadb-clone` 恢复到隔离 clone，失败不留下 passed
+receipt。wrapper 不接受数据库名/表名/flag 的用户 argv，不 eval/拼 shell。host bind 只允许 discovery
+已写入 `host-before` allowlist 的精确 `/run/mysqld/mysqld.sock`，拒绝其他 socket、host network、修改
+源监听、宿主 MariaDB data-dir mount。data-gate 只连接 clone/target，不直接连接宿主源。
+所有 host bind 使用 long syntax `type: bind` + `bind.create_host_path: false`。preflight 在 Compose 前对
+socket 执行 `-S`/非 symlink/owner+device+inode 与 host-before identity 核对，对 defaults file 执行
+regular-file/0600/0700 parent/非 symlink，对 wrapper 执行 tracked path+SHA-256，对 data dir 执行已存在
+directory/owner/mode/device/free-space 检查；任一缺失直接失败，绝不让 Docker 自动创建同名目录。
 
-三个运行变量都必须是 `repository@sha256:` 后紧跟 64 位小写十六进制 digest；裸 tag、短 SHA 和 `latest` 被 policy
+recovery/candidate host bind 使用严格 allowlist：任何 shadow 或 B drill 只允许
+`127.0.0.1:15001`；当前 recovery A final 与最终 candidate B 只允许 `127.0.0.1:5001`。A final 运行时，
+B candidate 可在 15001 并存；Task 18 必须先 fence/stop A，确认 5001 释放，才把 B recreate 到 5001。
+B→A 回退必须先停止 B，再按保留的 A config/digest 把 recovery role 恢复到 5001。preflight 拒绝
+`0.0.0.0`、空地址、其他端口和两组同时绑定同一 host port。可选 LAN 只能通过独立、临时受限
+override，在测试后立即撤销，不得写入正式 runtime file。
+
+Compose 在 profile 未启用时仍会做变量插值，因此 A-only 阶段不得留空 `CANDIDATE_IMAGE`：正式 0600
+runtime file 明确令 `CANDIDATE_IMAGE=$RECOVERY_IMAGE` 且 `CANDIDATE_STAGE=disabled`，只为安全渲染，
+preflight 与 candidate 四个 entrypoint 必须拒绝启动。B digest+attestation+A/B rootfs equivalence 通过后
+才可设 `shadow`（只允许 15001+全新 shadow identity）；B shadow 通过且切流前 A/B final-DB receipt
+重验完成后才可短暂设 `drill`（只允许 15001+锁定 final identity）；drill/canonical B evidence 通过后
+才可设 `final`（只允许 5001+锁定 final identity）。policy 负测覆盖 inactive variable 缺失、disabled
+启动、A/B 同 digest 却进入非 disabled、stage/port/data identity 错配，以及绕过 profile 直接指定
+service。禁止用裸 tag、空值或不可验证的假 digest 充当 sentinel。
+
+Redis identity 不等于单纯 `redis:6379` 地址：每次 A-shadow、B-shadow、final/recovery 都必须有稳定的
+`REDIS_NAMESPACE`（含 role+stage，shadow 另绑定 run），并由 gate receipt、API startup、runtime inspect
+和 acceptance artifact 四方对账。A/B shadow namespace 彼此不同且都不得等于 final；drill/final/
+rollback 只能使用已锁定的同一 final namespace。cache、lock、rate-limit、task/outbox key builder 必须
+强制加此前缀，禁止调用方绕过。
+
+Compose profiles 分离 `recovery`、`candidate` 与 `migration-tools`，而 shadow/final 是每次 role 启动时
+显式绑定并写入 receipt 的 data identity，不靠共享可变 service 名冒充。shadow 使用 A/B 各自新建的
+DB/schema、Redis namespace、outbox 和 gate run；final production DB/Redis 与全部 shadow identity
+隔离。`migration-tools` 只包含由 `MARIADB_RECOVERY_IMAGE` 指向官方 digest 的 MariaDB recovery image，
+不发布端口、不以裸 `docker run` 启动。应用 `data-gate-*` 必须与对应 role 使用同一 A/B digest，固定
+执行 `watermark-go data-gate`，成功退出且生成本次绑定 receipt 后 API 才能监听。policy 检查 profile、
+role image、网络、卷、数据库 identity、receipt 和运行变量，防止 shadow/rehearsal 串到 final 数据面。
+
+两套 `parser-helper`/`egress-proxy` 都是同一应用镜像的 stateless sandbox role，不是另一套 backend 或
+独立业务服务。每组 API 与 helper 只经本组 UDS 有界 job protocol 通信；helper 只有本组
+`parser_sandbox_*` membership，raw socket 无外网路由，本组 proxy 才同时加入 `egress`。API/native Go
+egress 仍走进程内 netguard。Compose policy、CI integration 与目标 runtime inspect 三者都必须按
+recovery/candidate role 验证 RepoDigest、固定 command、network IDs/membership、UDS/receipt 不交叉、
+无公开端口、helper/proxy 不含 MySQL/Redis DSN/secret；验证缺失时
+production fallback fail closed。helper 的 memory/CPU/PID/read-only/tmpfs/no-new-privileges hard limits
+必须由渲染后的 Compose 与 runtime inspect 同时验证，用来隔离第三方解压/进程资源；超限 job 失败但
+不得拖垮 API。sandbox network/UDS volume 随 project 生命周期管理，不绑定宿主任意路径。
+
+`RECOVERY_IMAGE`、`CANDIDATE_IMAGE`、MySQL/Redis/recovery-tool 等全部镜像变量都必须是
+`repository@sha256:` 后紧跟 64 位小写十六进制 digest；裸 tag、短 SHA 和 `latest` 被 policy
 拒绝。Task 13 通过官方 registry manifest/只读 imagetools inspect 在受控提交中解析并人工核对平台，
 把 tag+digest 固定到 lock；依赖更新必须独立审查提交。MySQL/Redis 不发布宿主机端口，数据 bind
-mount 到 `/var/lib/watermark-go`。
+mount 只允许精确 `/var/lib/watermark-go/data/{mysql,redis}`，preflight 验证 root-owned parent、服务 UID
+所需最小权限、非 symlink、可用空间/inode 与备份恢复；禁止匿名卷、相对路径、挂宿主源 MariaDB 数据
+目录或把整个 `/var/lib/watermark-go` 暴露给容器。
 环境示例文件使用可跟踪的 `deploy/env.example`；`.env*` 继续全局禁止跟踪。安全前置已删除旧根 Compose、旧 Nginx 配置和 mutable sync 脚本，Task 13 不得恢复它们。
 
 - [ ] **步骤 5：实现 Actions**
@@ -1317,11 +2092,15 @@ heads/tags 可达历史、annotated tag message 与即将推送 refs。Gitleaks 
 `gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9`，并在该 step 显式设置
 `GITLEAKS_VERSION: "8.30.1"`，不得使用浮动 tag。该 Action 的 push 扫描是 first-parent 增量门禁，
 不能被描述为全 refs/history 证据；checkout 后必须另行执行 `scripts/verify-gitleaks.sh`，以已校验的
-固定 v8.30.1 CLI 和显式 `--log-opts=--all` 作为权威全历史门禁。随后运行
-`gofmt/vet/test -race`、pytest、Trivy，再用 Buildx 推送
-`ghcr.io/1136623363/watermark-go:sha-${GITHUB_SHA}`（完整 40 位）和便利标签 `latest`。运行、验收和
-回滚永远只使用该 manifest 的 GHCR repository 加 `@sha256:` 和 64 位 digest，不用任何 tag；
-不调用远程服务器或 Jenkins。
+固定 v8.30.1 CLI 和显式 `--log-opts=--all` 作为权威全历史门禁。先运行
+`gofmt/vet/test -race`、policy/pytest/Node/store integration；随后 Buildx **只构建一次**并把 manifest
+推到隔离索引 `ghcr.io/1136623363/watermark-go:sha-${GITHUB_SHA}`（完整 40 位），捕获其精确 manifest
+digest。Trivy、解包 canonical rootfs/tool inventory、role command/health/runtime smoke、SBOM、
+provenance attestation subject 与 OCI label 全部针对该 `repository@sha256:` digest 验证。全部成功后才
+用 registry manifest copy/retag 把便利标签 `latest` 指向同一 digest，禁止二次 build 生成另一个 digest。
+失败 digest/sha tag 可留在 quarantine 供调查，但不得写 canonical release evidence、不得移动
+`latest`、不得部署。运行、验收和回滚永远只使用经过上述门禁的 digest，不用任何 tag；不调用远程
+服务器或 Jenkins。
 
 workflow 顶层默认 `permissions: {}`；所有 checkout/setup-go/setup-python/buildx/login/build-push/
 attest/Trivy action 固定 40 位 commit SHA 并带版本注释。checkout 设置 `persist-credentials:false`；
@@ -1333,6 +2112,11 @@ WeChat exchanger。
 CI 不 clone、执行或按默认分支/tag 同步 `ucmao/media-parser`；它只是由 repository policy 校验的固定研究
 provenance，不进入 runtime/SBOM dependency graph。若未来独立审查后复制实质代码/数据，必须先新增
 MIT NOTICE/license attribution、复制文件 manifest 与 policy 门禁，并让 SBOM/provenance 反映真实依赖。
+测试 job 必须显式运行 Task 15 的 media-parser focused suite 并保存逐测试 manifest/hash，不能只依赖宽泛
+`go test ./...`。image job 捕获唯一 tested manifest digest 后，把该 source-level 结果、精确
+`sourceCommit`、实际 `imageDigest`、GitHub `ciRunId`、runtime smoke 与 unsafe runtime/build-graph scan
+组合成 versioned `mediaParserIntegration` artifact，并将其 subject/identity 纳入 attestation；任何 source/
+digest/run 不一致都不得移动便利标签或发布 canonical evidence。
 镜像测试还必须逐项验证运行所需 yt-dlp/Python bridge/ffmpeg 的固定版本与可执行性，防止“代码调用工具
 但 runtime 未安装”的缺口。
 单独的 store integration job 使用 `deploy/image-lock.json` 固定的 MariaDB 11.8 recovery 与 MySQL 8.4
@@ -1346,11 +2130,18 @@ schema/原子生成标记和内部一致性，不要求尚未产生的部署证�
 源码 push 上调用 complete 模式形成 CI 自锁。image job 仅在 Dockerfile、锁文件、Go/Python 依赖、
 精确路径 `release/promotion-marker.txt` 或应用源码构建输入变化时执行；docs/artifacts-only push 不运行 image job、不重建镜像，
 也不移动 `latest`。
+marker 触发是额外硬门禁：workflow 必须定位 marker 绑定的 immutable `evidence/recovery-<runId>` ref，
+执行 `verify-acceptance.py --require-recovery-ready`，验证 evidence commit parent=A source、只含允许的脱敏
+artifact、payload hash/A digest/promotionRunId 与 marker 一致，且 B main commit parent=A、diff 只有 marker。
+任一不满足时 image job 在 Buildx 前失败；普通手工 marker 或 evidence ref 更新被 policy 拒绝。
 
-Buildx 同时生成 provenance attestation subject，把 manifest digest 绑定完整 40 位 source commit 和
-固定 source URL。`scripts/verify-image.sh`、发布证据与目标机 runtime inspect 必须联合验证：实际
-RepoDigest 等于 attestation subject digest，OCI `org.opencontainers.image.revision` 等于证据中的完整
-commit，`org.opencontainers.image.source` 等于新仓库；tag 仅作索引，不能作为运行身份或通过依据。
+Buildx 在唯一一次 build/push 中同时生成 provenance attestation subject，把捕获的 manifest digest 绑定
+完整 40 位 source commit 和固定 source URL。workflow 必须把 exact tested digest 作为 Trivy/SBOM/
+rootfs/tool/runtime-smoke/attestation 的唯一 subject，并在移动便利 tag 前交叉核对全部 subject 相同；
+policy 用恶意 workflow fixture 拒绝 scan-before-build、scan tag、第二次 build、测试 digest 与 retag
+digest 不同或失败仍更新 tag。`scripts/verify-image.sh`、发布证据与目标机 runtime inspect 联合验证：
+实际 RepoDigest 等于该 tested/attested digest，OCI `org.opencontainers.image.revision` 等于完整 commit，
+`org.opencontainers.image.source` 等于新仓库；tag 仅作索引，不能作为运行身份或通过依据。
 
 本地与 CI 的权威 Gitleaks CLI 固定为 `v8.30.1`。Linux x64 官方 release 归档的 SHA-256 固定为
 `551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb`。统一脚本只从官方 release
@@ -1404,12 +2195,25 @@ fi
 
 ```bash
 go test ./internal/policy -count=1
-BACKEND_IMAGE=ghcr.io/1136623363/watermark-go@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+RECOVERY_IMAGE=ghcr.io/1136623363/watermark-go@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+  CANDIDATE_IMAGE=ghcr.io/1136623363/watermark-go@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+  CANDIDATE_STAGE=disabled RECOVERY_DATA_STAGE=final \
+  RECOVERY_API_HOST_PORT=5001 CANDIDATE_API_HOST_PORT=15001 \
+  DEPLOYMENT_RUN_ID=static-config-test RECOVERY_GATE_ATTEMPT_ID=recovery-static RECOVERY_GATE_MODE=apply \
+  CANDIDATE_GATE_ATTEMPT_ID=candidate-disabled-static \
+  CANDIDATE_GATE_MODE=apply RECOVERY_MIGRATION_SOURCE_DSN=redacted-source \
+  RECOVERY_MIGRATION_TARGET_DSN=redacted-migrator RECOVERY_MYSQL_DSN=redacted-target \
+  RECOVERY_REDIS_ADDR=redis:6379 RECOVERY_REDIS_NAMESPACE=recovery-final \
+  CANDIDATE_MIGRATION_SOURCE_DSN=disabled \
+  CANDIDATE_MIGRATION_TARGET_DSN=disabled CANDIDATE_MYSQL_DSN=disabled CANDIDATE_REDIS_ADDR=disabled \
+  CANDIDATE_REDIS_NAMESPACE=disabled \
   MYSQL_IMAGE=mysql@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
   REDIS_IMAGE=redis@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc \
   MARIADB_RECOVERY_IMAGE=mariadb@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd \
-  API_BIND_ADDRESS=127.0.0.1 API_HOST_PORT=15001 \
-  MYSQL_PASSWORD=x MYSQL_ROOT_PASSWORD=x ADMIN_PASSWORD=x ADMIN_SESSION_SECRET=x DOWNLOAD_TOKEN_SECRET=x \
+  SOURCE_MARIADB_DEFAULTS_FILE=/tmp/source.cnf MARIADB_CLONE_DEFAULTS_FILE=/tmp/clone.cnf \
+  MYSQL_PASSWORD=x MYSQL_ROOT_PASSWORD=x MARIADB_CLONE_ROOT_PASSWORD=x \
+  ADMIN_PASSWORD=x ADMIN_SESSION_SECRET=x DOWNLOAD_TOKEN_SECRET=x \
+  WECHAT_MINI_APP_ID=x WECHAT_MINI_APP_SECRET=x \
   docker compose -f deploy/compose.yml config --quiet
 scripts/verify-gitleaks.sh
 ```
@@ -1438,6 +2242,7 @@ git commit -m "ci: publish reproducible GHCR image without Jenkins"
 - 创建：`scripts/verify-image.sh`
 - 创建：`scripts/host-snapshot.sh`
 - 创建：`scripts/verify-acceptance.py`
+- 创建：`scripts/promote.sh`
 - 创建：`scripts/write-evidence.py`
 - 创建：`tests/baseline/test_report.py`
 - 创建：`tests/ops/test_scripts.py`
@@ -1470,6 +2275,20 @@ table-scoped no-writer 任一项都失败，只有可靠 binlog mode 才要求 d
 schema/aggregate 合法也必须拒绝；任一条件必须非零退出。
 `tests/ops` 还必须覆盖写正式文件前崩溃、rename/fsync 失败、ERR/EXIT/HUP/INT/TERM 中断、遗留
 `in_progress` attempt、旧 PASS scan/status 文件和重启 reconcile；任何情形都不能复用旧 passed。
+同组负测以 fake Compose runner 锁定 data-gate 生命周期：每个 role/stage/run 必须先
+`--force-recreate --no-deps` one-shot、核对新 container start identity/exit/receipt，再允许启动 API；复用
+旧 exited container、只依赖 `depends_on`、缺 force-recreate、receipt 早于 attempt 或跨 role volume 都失败。
+promotion 负测覆盖：缺任一 A recovery artifact、evidence commit parent 非 A、evidence diff 夹带源码、
+marker parent 非 A、marker 为空/手写/绑定错 digest/OID/payload hash、重复或可变 evidence ref，以及 marker
+外任何 A→B tracked diff；都必须在 push/Buildx 前失败。`scripts/promote.sh` 只在本地 recovery-ready
+verifier 通过后用临时 index 构造 evidence-only commit/ref 和唯一 marker commit，不修改 A source tree，
+并复用安全 ASKPASS、index-aware repository policy 与全 refs Gitleaks 门禁。
+
+`verify-acceptance.py` 还必须重算并验证 `mediaParserIntegration` machine evidence，而不是相信顶层
+`passed`：至少绑定完整 `sourceCommit`、实际 `imageDigest`、可信 `ciRunId`、test manifest/hash 与
+registry/structured JSON/query policy/candidate ranking+budget/cache semantics/rich-media/unsafe-pattern
+各子门的独立结果。缺字段、source/digest/CI run 不匹配、任一子门缺失或 false、用 live aggregate 代替
+hermetic 原始测试清单，均由 `tests/ops` 负向夹具证明非零失败。
 
 观察证据的负向夹具禁止只信聚合：要求 `endedAt-startedAt>=1800s`；第一个样本在 startedAt 后约 30 秒，
 第 60 个样本不早于 startedAt+1800s，恰好 60 个唯一且严格递增的序号/时间戳，相邻采样合理间隔为
@@ -1595,6 +2414,8 @@ git commit -m "ops: add guarded baseline deploy and rollback tooling"
 - 创建：`artifacts/verification/local-verification.md`（脱敏、无凭据和外部媒体，可提交）
 - 创建：`artifacts/verification/secret-scan.txt`（versioned JSON，含 schemaVersion/passed/runId/version/scope，
   不含 finding/path/ref）
+- 创建：`artifacts/verification/media-parser-integration.json`（Task 15 的 source-level hermetic 前置证据；
+  Task 16 Actions 再生成绑定实际 digest/CI run 的部署证据）
 
 `artifacts/verification/local-verification.md` 使用可机器解析的 YAML front matter，至少包含
 `schemaVersion`、`passed`、source commit、命令/退出码和生成时间，正文只含脱敏摘要。生成器先写
@@ -1607,8 +2428,29 @@ git commit -m "ops: add guarded baseline deploy and rollback tooling"
 test -z "$(gofmt -l .)"
 GOMAXPROCS=2 GOMEMLIMIT=2GiB go vet ./...
 GOMAXPROCS=2 GOMEMLIMIT=2GiB go test -race -p 2 ./... -count=1
+python3 -m pytest tests/policy/test_python_bridge_security.py -q
 python3 -m pytest tests/baseline tests/ops -q
+FRONTEND_REPO=/srv/watermark scripts/verify-frontend-provenance.sh
+for f in /srv/watermark/test/test_miniprogram_*.js; do node "$f"; done
+FRONTEND_REPO=/srv/watermark scripts/verify-frontend-provenance.sh
 ```
+
+另显式运行 media-parser focused suite，避免宽泛 `./...` 因测试被改名、skip 或 owner 漂移而假绿：
+suite manifest 至少逐名包含 `TestStructuredJSONGoldenMatrix`、`TestMediaCandidateOrderIsStable`、
+`TestCanonicalURLQueryPolicyMatrix`、cache negative/version 测试和 `TestDASHCandidateOrderAndFallbackBudget`。
+
+```bash
+go test ./internal/parser/... ./internal/parse ./internal/cache ./internal/media ./tests/contracts \
+  -run 'Test(Registry|StructuredJSON|MediaCandidate|CanonicalURL|CacheKey|NegativeCache|NormalizeLivePhoto|DASH)' \
+  -count=1
+go test ./internal/policy -run 'TestMediaParser' -count=1
+```
+
+通过后以统一 atomic writer 生成 `mediaParserIntegration` evidence，包含 implementation `sourceCommit`、
+test manifest/hash 和每个子门的原始命令/退出码；Task 15 尚未发布镜像，因此明确记录
+`imageDigest=notApplicablePreBuild`、`ciRunId=notApplicableLocal`，不得伪造 registry digest。Task 16
+可信 Actions 在精确 tested digest 上重跑同一套件并生成同 schema 的 actual `imageDigest`/`ciRunId` 证据，
+后续 Task 17/18 只能使用这一部署级版本。
 
 预期：全部退出 0。这里只运行 hermetic/in-process 测试；需要活服务的 `tests/e2e` 已由 Actions runner
 执行，并将在任务 17 对已拉 GHCR 镜像重跑，Task 15 不在目标宿主启动依赖或服务。
@@ -1616,12 +2458,25 @@ python3 -m pytest tests/baseline tests/ops -q
 - [ ] **步骤 2：Compose、secret 和差异检查**
 
 ```bash
-BACKEND_IMAGE=ghcr.io/1136623363/watermark-go@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+RECOVERY_IMAGE=ghcr.io/1136623363/watermark-go@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+  CANDIDATE_IMAGE=ghcr.io/1136623363/watermark-go@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+  CANDIDATE_STAGE=disabled RECOVERY_DATA_STAGE=final \
+  RECOVERY_API_HOST_PORT=5001 CANDIDATE_API_HOST_PORT=15001 \
+  DEPLOYMENT_RUN_ID=local-verification RECOVERY_GATE_ATTEMPT_ID=recovery-local RECOVERY_GATE_MODE=apply \
+  CANDIDATE_GATE_ATTEMPT_ID=candidate-disabled-local \
+  CANDIDATE_GATE_MODE=apply RECOVERY_MIGRATION_SOURCE_DSN=redacted-source \
+  RECOVERY_MIGRATION_TARGET_DSN=redacted-migrator RECOVERY_MYSQL_DSN=redacted-target \
+  RECOVERY_REDIS_ADDR=redis:6379 RECOVERY_REDIS_NAMESPACE=recovery-final \
+  CANDIDATE_MIGRATION_SOURCE_DSN=disabled \
+  CANDIDATE_MIGRATION_TARGET_DSN=disabled CANDIDATE_MYSQL_DSN=disabled CANDIDATE_REDIS_ADDR=disabled \
+  CANDIDATE_REDIS_NAMESPACE=disabled \
   MYSQL_IMAGE=mysql@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
   REDIS_IMAGE=redis@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc \
   MARIADB_RECOVERY_IMAGE=mariadb@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd \
-  API_BIND_ADDRESS=127.0.0.1 API_HOST_PORT=15001 \
-  MYSQL_PASSWORD=x MYSQL_ROOT_PASSWORD=x ADMIN_PASSWORD=x ADMIN_SESSION_SECRET=x DOWNLOAD_TOKEN_SECRET=x \
+  SOURCE_MARIADB_DEFAULTS_FILE=/tmp/source.cnf MARIADB_CLONE_DEFAULTS_FILE=/tmp/clone.cnf \
+  MYSQL_PASSWORD=x MYSQL_ROOT_PASSWORD=x MARIADB_CLONE_ROOT_PASSWORD=x \
+  ADMIN_PASSWORD=x ADMIN_SESSION_SECRET=x DOWNLOAD_TOKEN_SECRET=x \
+  WECHAT_MINI_APP_ID=x WECHAT_MINI_APP_SECRET=x \
   docker compose -f deploy/compose.yml config --quiet
 go test ./internal/policy -count=1
 scan_status="$(scripts/verify-gitleaks.sh)"
@@ -1648,7 +2503,11 @@ git status --short --branch
 ```bash
 git diff --name-only
 # 依据已审查清单逐条 git add -- 精确 implementation/test 路径
+go test ./internal/policy -count=1
+git diff --cached --check
+git diff --cached --name-only
 git commit -m "fix: address pre-release review findings"
+test "$(scripts/verify-gitleaks.sh)" = PASS
 ```
 
 该修复 commit 后必须重跑步骤 1–2；若又有 must-fix，重复红/绿与精确提交，直到代码审查无阻塞项。
@@ -1657,11 +2516,16 @@ git commit -m "fix: address pre-release review findings"
 - [ ] **步骤 4：Commit**
 
 ```bash
-git add artifacts/verification/local-verification.md artifacts/verification/secret-scan.txt
+git add artifacts/verification/local-verification.md artifacts/verification/secret-scan.txt \
+  artifacts/verification/media-parser-integration.json
+go test ./internal/policy -count=1
+git diff --cached --check
+git diff --cached --name-only
 git commit -m "test: record local verification evidence"
+test "$(scripts/verify-gitleaks.sh)" = PASS
 ```
 
-此独立 evidence commit 只含两份脱敏验证 artifact；任何 must-fix 实现或测试若仍未提交，必须返回步骤 3，
+此独立 evidence commit 只含三份脱敏验证 artifact；任何 must-fix 实现或测试若仍未提交，必须返回步骤 3，
 不得借 evidence commit 带入。
 
 ## 任务 16：创建 GitHub 仓库并发布两阶段中的 recovery 候选 A
@@ -1742,8 +2606,10 @@ commit、workflow URL、tag、RepoDigest 与 PASS；`recovery-image-digest.txt` 
 final digest。文件不得含 token；部署不使用
 `latest` 或裸 SHA tag。
 
-A 验证前禁止发布 B。任务 17 把 A 提升为 verified recovery 后，才允许创建只改精确路径
-`release/promotion-marker.txt`/OCI revision 的 promotion commit 并由 Actions 构建 B；B 的 source/digest/attestation、A/B 等价性和最终
+A 验证前禁止发布 B。任务 17 把 A 提升为 verified recovery 并生成 marker 绑定的 immutable recovery
+evidence ref 后，才允许创建 tracked diff 只改精确路径 `release/promotion-marker.txt` 的 promotion commit
+并由 Actions 构建 B；OCI revision 仅是 CI 自动生成的 label，不是 source diff。B 的 source/digest/
+attestation、A/B 等价性和最终
 reference 分别写入 `final-image-digest.txt`、`promotion-equivalence.json` 与 `image-digest.txt`。
 `repository-and-image.txt` 按 A/B role 保存两组 commit/digest/workflow/attestation；B 的 SBOM 写入
 `sbom-final.spdx.json`，canonical `sbom.spdx.json` 最终明确指向 B role，禁止把 A 证据冒充 B。
@@ -1761,6 +2627,8 @@ reference 分别写入 `final-image-digest.txt`、`promotion-equivalence.json` �
 - 创建：`artifacts/migration/legacy-data-rehearsal.json`
 - 创建：`artifacts/acceptance/shadow-e2e.json`
 - 创建：`artifacts/acceptance/final-shadow-e2e.json`
+- 创建：`artifacts/acceptance/media-parser-integration.json`（可信 CI artifact 绑定 B source/digest/ciRunId，
+  Task 18 继续复验/补充 live-or-hermetic capability disposition）
 - 创建：`artifacts/acceptance/admin-and-baseline.json`
 - 创建：`artifacts/acceptance/redis-degraded.json`
 - 创建：`artifacts/acceptance/recovery-domain-e2e.json`
@@ -1815,15 +2683,18 @@ digest 的 MariaDB recovery image；禁止裸 docker run、裸 tag、本地 buil
 先把备份恢复到隔离 MariaDB clone 并核对，再由 typed importer 映射到 disposable MySQL 8.4 clone，
 验证字符集、默认值、时间/JSON/数值语义、schema version、行数与稳定字段 checksum。artifact 记录
 engine/version/capabilities 和 `chosenMigrationMode=final_full_no_binlog`。由于 log_bin/GTID 不可用，
-shadow 数据可来自早期 full 仅用于测试；final production DB 必须在 table-scoped fence、连接身份和
-重复 hash 证明无 writer后重新生成一致性 full snapshot/import/checksum。禁止全实例锁或 read_only，
+shadow 数据可来自早期 full 仅用于测试；首次或已证明前次零接受写入时，final production DB 必须在
+table-scoped fence、连接身份和重复 hash 证明无 writer后重新生成一致性 full snapshot/import/checksum；
+若已有失败 attempt 的 retained fact source，则禁止重做 full，必须按步骤 7 reconcile/reuse。禁止全实例锁或 read_only，
 也禁止用 `updated_at` 伪造 delta。任何新 writer、hash 漂移或转换差异都停止。
 
 - [ ] **步骤 3：只拉取并验证 recovery 候选 A**
 
 创建 0700 临时 `DOCKER_CONFIG` 并注册 EXIT/signal trap；token 只经 stdin 传给 `docker login`。
-`BACKEND_IMAGE` 此时只能读取 `recovery-image-digest.txt` 的 A candidate digest，禁止提前使用尚未生成的
-final `image-digest.txt`。Compose pull 后用 `scripts/verify-image.sh` 和 runtime inspect 验证实际
+`RECOVERY_IMAGE` 此时只能读取 `recovery-image-digest.txt` 的 A candidate digest；因 Compose inactive
+profile 也插值，`CANDIDATE_IMAGE` 暂时精确等于 A 且 `CANDIDATE_STAGE=disabled`，candidate services 禁止
+启动，不能提前使用尚未生成的 final `image-digest.txt`。Compose pull 后用
+`scripts/verify-image.sh` 和 runtime inspect 验证实际
 RepoDigest、attestation subject、OCI revision/source 与 A 的完整 commit 一致；随后 logout 并删除临时
 目录。不得 build/load，终端与 artifact 不输出 token；pull、完整 commit/digest 与验证结果写入
 `artifacts/deploy/pull-and-up.txt` 的 A pull event，明确 `localBuild=false`、`localLoad=false`；后续步骤按
@@ -1844,11 +2715,14 @@ final checksum 无本轮 shadow/A-B acceptance 的 runId/taskId/sentinel/outbox�
 legacy snapshot 中原有合法历史（包括 platform_runs/测试记录）按 source checksum 保留，不把历史事实误删。
 artifact 记录两套 DB/Redis identity、导入来源 hash 和 outbox namespace；
 `verify-acceptance.py 强制证明`上述隔离关系。
+“全新 production full”只适用于尚无 retained predecessor，或前次 attempt 已由 route/access log、DB 与
+outbox 三方共同证明 `acceptedWrites=0` 的零写重试；一旦失败 attempt 接受过写入，必须走步骤 7 的
+retained fact source reconciliation，禁止重新 full 覆盖。
 
 - [ ] **步骤 5：在 A shadow 上跑服务 E2E、后台、恢复和三轮基准**
 
-仓库外 `/var/lib/watermark-go/runtime.env` 先设 `API_BIND_ADDRESS=127.0.0.1`、
-`API_HOST_PORT=15001` 并绑定 shadow DSN/Redis namespace；production preflight 只报字段分类。对
+仓库外 `/var/lib/watermark-go/runtime.env` 先设 `RECOVERY_API_HOST_PORT=15001` 并绑定 recovery role 的
+shadow DSN/Redis namespace；production preflight 只报字段分类。对
 `http://127.0.0.1:15001` 运行完整服务契约、后台登录/RBAC/CSRF、诊断、Redis 降级恢复、重启后的
 completed/pending/outbox 恢复，以及三轮 93 样本基准。production 微信在 shadow 只测 preflight 和无效
 code 安全失败，不能冒充真实绑定。
@@ -1881,7 +2755,7 @@ Task 17 的 legacy/initial rollback rehearsal 只能操作隔离 old-service clo
 重新执行 table-scoped fence/无 writer 证明，创建 final consistent full snapshot，经 typed importer 写入
 全新 final DB；migration+import+scrub+checksum 全部通过且 final checksum 证明无本轮 shadow/A-B
 acceptance 的 runId/taskId/sentinel/outbox 后，才允许
-启动 A final listener/worker。runtime file 改为 `API_BIND_ADDRESS=127.0.0.1`、`API_HOST_PORT=5001`。
+启动 A final listener/worker。runtime file 改为 `RECOVERY_API_HOST_PORT=5001`。
 切流前确认已登录 DevTools/真机和一次性 wx.login readiness；route 只根据运行 tunnel/dashboard 或安全
 API identity 更新/验证，不编辑 token tunnel。
 readiness code 只证明外部前置、不得保存或复用；A 真实矩阵开始 session 前必须再次调用 `wx.login`
@@ -1890,7 +2764,15 @@ readiness code 只证明外部前置、不得保存或复用；A 真实矩阵开
 以 `rollbackMode=absent_two_stage` bootstrap A。A 必须先完成 A shadow 隔离全验，再在 A 真实域名通过
 真微信、固定前端全矩阵和 `A observation>=1800s`；只有这些原始证据通过，A 才成为 recoveryDigest。
 若 A 首上任一步失败，立即 fence/drain A 新写并撤销本次 route 变更、恢复原 502 路由，保留 final DB/
-outbox 已接受写入供调查并标记 `FAILED`；任务未完成，不得声称 5 分钟健康回滚或已有 recovery。
+outbox 并标记 `FAILED`。只要 route/access log/DB/outbox 任一证明接受过写入，该确切 final DB/outbox
+立即成为 retained fact source，不是可丢弃的调查副本；失败 evidence 固定
+`predecessorDBIdentity`、accepted-write coordinate/count、稳定 checksum、outbox high-water mark 和
+`retryDisposition=pending_reconcile`。下一次 A/A' attempt 必须先在 fence 下 reconcile pending/running/
+outbox/idempotency 并复用该 DB，或用可证明无丢失的 forward-only migration/replay 到唯一 successor，
+记录 predecessor→successor checksum；禁止重新 full 覆盖、丢弃卷或回放早期 snapshot。只有 DB、
+outbox、route 三方共同证明 `acceptedWrites=0` 才允许 `retryDisposition=rebuild_zero_writes` 新建 final DB。
+verifier 拒绝缺 predecessor identity/坐标、写入后 rebuild、未完成 reconciliation 或 successor checksum
+不一致。任务未完成，不得声称 5 分钟健康回滚或已有 recovery。
 
 真实前端证据写 `recovery-domain-e2e.json`，其 cases schema 与 Task 18 完全相同，逐项包含 session、
 syncParse、asyncSubmit/asyncPoll、cacheRestore、performance、fallbackCreate/fallbackPoll/fallbackDownload、
@@ -1904,9 +2786,17 @@ health 样本必须请求真实 `https://watermark.bxsn.cn/api/health` 并绑定
 
 - [ ] **步骤 8：Actions 只做等价 promotion 生成并隔离验收 B**
 
-A 成为 recovery 后才创建 B。A→B source diff allowlist 仅允许精确路径
-`release/promotion-marker.txt`/OCI revision；禁止
-Go/依赖/Dockerfile/执行/config/migration/schema 变化。Actions 从 B 完整 source commit 构建不同 digest，
+A 成为 recovery 后才创建 B。先由唯一 `scripts/promote.sh` 对 A shadow/domain/真微信/30m/benchmark/
+migration/recovery digest 全部运行 `verify-acceptance.py --require-recovery-ready`，生成一个 parent 为 A source
+commit、diff 只含脱敏 A evidence 的 immutable `evidence/recovery-<runId>` tag/ref；再让 marker 绑定该
+evidence commit OID、排除自身的 evidence payload hash、A digest/source commit 与 promotionRunId。marker
+commit 的 parent 必须仍精确为 A source commit，tracked A→B source diff allowlist **唯一**允许
+`release/promotion-marker.txt`；OCI revision 是 CI 根据 B commit 自动写入 OCI config 的 label 差异，不是
+source path/diff。禁止 Go/依赖/Dockerfile/执行/config/migration/schema 或其他 tracked 文件变化。
+
+marker push 的 image job fetch immutable evidence ref，复跑 `--require-recovery-ready`、复算 payload hash/
+A digest/parent/diff allowlist，并拒绝空 marker、手工 marker、可变/缺失 evidence ref 或尚未 verified 的 A；
+evidence ref push 本身只跑 scan/verifier且不构建镜像。Actions 从 B 完整 source commit 构建不同 digest，
 要求 `recoveryDigest != finalDigest`。机器比较 A/B 的 rootfs/app binary/tool versions/schema，除
 `org.opencontainers.image.revision` 等仅 OCI label 白名单差异外必须逐字节/哈希一致，否则 B 不得称为
 等价 promotion。
@@ -1925,7 +2815,11 @@ canonical `sbom.spdx.json` 明确 final B role。只有 B attestation、等价�
 
 - [ ] **步骤 9：真实演练 B→A 并锁定 Task 18 状态**
 
-在 A 已稳定、final DB 已验证同时兼容两镜像后，短暂把 B 接到同一兼容 final DB 和真实 route，立刻
+在 A 已稳定、final DB 已验证同时兼容两镜像后，先生成唯一 `drillRunId`，把 candidate stage 设为
+`drill`，以只读 DSN 和 `GATE_MODE=revalidate` 分别 `--force-recreate --no-deps`
+`data-gate-recovery`/`data-gate-candidate`。两份新 receipt 必须绑定本 drill、A/B digest、同一 final DB/
+Redis namespace、schema checksum/config hash 和当前 accepted-write/outbox coordinate；禁止 DDL/import/
+scrub。只有两份 receipt 与 runtime inspect 均通过，才短暂把 B 接到同一兼容 final DB 和真实 route，立刻
 实跑 B→A 真实 drill；这是 actual absent 模式的当前适用分支真实演练。要求
 `durationSeconds<=300`、`healthPassed=true`、`dataPassed=true`、route/digest/DB identity 全部通过，
 结束时恢复 A。统一 `rollback-drill.txt` 虽为 `.txt` 后缀但内容是 JSON：`schemaVersion`、`passed`、
@@ -1947,6 +2841,8 @@ route、writer identity 均验证时条件启用。此时 `running-digest.txt` �
 - 创建：`artifacts/deploy/public-cutover.json`
 - 创建：`artifacts/deploy/observation-30m.json`
 - 创建：`artifacts/acceptance/frontend-domain-e2e.json`
+- 创建：`artifacts/acceptance/media-parser-integration.json`（可信 CI hermetic 结果绑定 B source/digest/run，
+  合法稳定样本存在时才附加 live audio/Live Photo 结果）
 - 创建：`artifacts/acceptance/final-acceptance.md`
 - 修改：`artifacts/migration/legacy-data-rehearsal.json`（mode-specific final full/import/checksum/no-writer）
 - 修改：`artifacts/deploy/before-after-containers.json`（最终 after/diff）
@@ -1971,6 +2867,28 @@ ERR/EXIT/HUP/INT/TERM 的幂等 trap。若启动时发现遗留未关闭 attempt
 可疑 writer，并按 A bootstrap→原 502 或 B cutover→A 进行 reconcile；route/data/running digest 与终态
 证据未通过前，不得开始新 attempt 或解除 trap。
 
+仍在 fence 前，以当前 Task 18 `deploymentRunId`、final DB identity 和只读凭据分别强制重建两次
+one-shot gate：A recovery 使用 `GATE_MODE=revalidate` 生成 **rollback receipt**，B candidate 使用
+`GATE_MODE=revalidate` 生成 **final receipt**。两份 receipt 分别绑定 A/B digest、各自 config hash、同一
+final schema checksum/Redis namespace、当前 accepted-write/outbox coordinate 和本 attempt；任一旧 Task17
+receipt、apply mode、DDL/import/scrub 调用、DB identity 不同或 schema 漂移都禁止进入 fence。state 原子
+锁定这两份 receipt hash。B 接受业务写入后 coordinate 可单调前进，但 schema/config/data identity 不得
+变化；B→A 时做有界只读 quick-check，要求 current coordinate 不回退且 schema/identity 仍匹配，即可消费
+预生成 A receipt 而不重跑 full gate，保证 300 秒目标。意外 schema/identity 漂移使 receipt 失效并进入
+受控只读 FAILED，不能盲启 A。
+
+```bash
+docker compose --env-file /var/lib/watermark-go/runtime.env -f deploy/compose.yml --profile recovery \
+  up --force-recreate --no-deps --abort-on-container-exit \
+  --exit-code-from data-gate-recovery data-gate-recovery
+docker compose --env-file /var/lib/watermark-go/runtime.env -f deploy/compose.yml --profile candidate \
+  up --force-recreate --no-deps --abort-on-container-exit \
+  --exit-code-from data-gate-candidate data-gate-candidate
+```
+
+这两条只运行已从 GHCR 拉取的 one-shot role，不构建镜像；脚本在执行前验证 Compose 无 `build:`，并在
+每条后核对新 container start identity/exit/receipt，禁止复用 exited container。
+
 再次执行 host discovery 和 `host-before 精确 identity/hash allowlist` 比对，确认 A、final DB、route 与
 无关对象未漂移；默认仍只操作 `watermark-go`。采集 MemAvailable、swap si/so、memory/io PSI、OOM、
 磁盘/inode、端口与无关容器 hash，任一停止线触发都不切流。
@@ -1982,12 +2900,17 @@ ERR/EXIT/HUP/INT/TERM 的幂等 trap。若启动时发现遗留未关闭 attempt
 
 ```bash
 test "$(stat -c '%a' /var/lib/watermark-go/runtime.env)" = 600
-test "$(grep -Fx 'API_BIND_ADDRESS=127.0.0.1' /var/lib/watermark-go/runtime.env)" = 'API_BIND_ADDRESS=127.0.0.1'
-test "$(grep -Fx 'API_HOST_PORT=5001' /var/lib/watermark-go/runtime.env)" = 'API_HOST_PORT=5001'
+test "$(grep -Fx 'RECOVERY_API_HOST_PORT=5001' /var/lib/watermark-go/runtime.env)" = 'RECOVERY_API_HOST_PORT=5001'
+test "$(grep -Fx 'CANDIDATE_API_HOST_PORT=5001' /var/lib/watermark-go/runtime.env)" = 'CANDIDATE_API_HOST_PORT=5001'
+test "$(grep -Fx 'CANDIDATE_STAGE=final' /var/lib/watermark-go/runtime.env)" = 'CANDIDATE_STAGE=final'
+test "$(grep -Fx 'RECOVERY_GATE_MODE=revalidate' /var/lib/watermark-go/runtime.env)" = 'RECOVERY_GATE_MODE=revalidate'
+test "$(grep -Fx 'CANDIDATE_GATE_MODE=revalidate' /var/lib/watermark-go/runtime.env)" = 'CANDIDATE_GATE_MODE=revalidate'
 docker compose --env-file /var/lib/watermark-go/runtime.env -f deploy/compose.yml config --quiet
 ```
 
-最终 runtime 只允许 `API_BIND_ADDRESS=127.0.0.1` 与 `API_HOST_PORT=5001`。LAN 调试只能在 Task 17 使用
+最终 runtime 的 candidate role 只允许隐式固定 bind `127.0.0.1` 与
+`CANDIDATE_API_HOST_PORT=5001`；recovery role 保留同一 5001 配置但必须停止，二者不能同时占用端口。
+LAN 调试只能在 Task 17 使用
 临时受限 LAN override，Task 18 禁止启用 LAN override。
 
 - [ ] **步骤 2：fence A 后把 B 切到同一兼容 final DB**
@@ -1996,7 +2919,8 @@ actual `rollbackMode=absent_two_stage` 不存在可栅栏的 legacy 服务。先
 排空 in-flight/worker，固定 final DB/outbox 坐标并重算稳定字段 checksum；复验
 `chosenMigrationMode=final_full_no_binlog` 的 source snapshot/import 证据、final DB identity、
 `schemaCompatibleWithRecovery=true` 与 `schemaCompatibleWithFinal=true`。只有 `passed=true` 才把
-`BACKEND_IMAGE` 从 A recovery digest 原子切为 B final digest；B 使用同一兼容 final DB/Redis 和
+停止 recovery role 并确认端口释放后，以已预置的 `CANDIDATE_IMAGE` B digest 和
+`CANDIDATE_API_HOST_PORT=5001` 启动 candidate role；B 使用同一兼容 final DB/Redis 和
 `127.0.0.1:5001`，不重跑 shadow 数据、不导入测试记录。切换成功后解除 B fence，A 容器/image、
 attestation、配置和 route rollback state 继续保留。
 
@@ -2009,7 +2933,8 @@ trap 回退 A，禁止留下 `passed` 的 B final up/运行证据；回退成功
 切流前安装并保持统一 post-cutover failure trap；旧侧可恢复状态在 absent 模式指 verified A recovery、
 同一 final DB、A config/digest 和权威 route 快照，在步骤 3—6 全部通过前不得解除或清理。步骤
 3、4、5、6 任一失败，trap 先立即 fence/drain 新写，再自动调用已演练且适用的 rollback 分支；正常
-失败自动完成 B→A，要求 duration<=300s、health/data/route passed，不能只告警后继续运行。
+失败以预生成 A rollback receipt + 当前 schema/identity/monotonic coordinate quick-check 自动完成 B→A，
+不得在回滚窗口执行 apply/full import；要求 duration<=300s、health/data/route passed，不能只告警后继续运行。
 
 若 B→A rollback 本身不能证明成功，禁止恢复旧路由，且不得让疑似坏版本继续接受写；保持 B/A 新侧
 受控只读/隔离、保留旧侧可恢复状态并把结果标为 `FAILED`，等待人工处置而不做破坏性猜测。只有
@@ -2042,6 +2967,14 @@ started/ended、HTTP/业务结果和 passed，顶层也含 `schemaVersion`/`pass
 commit/digest、`deploymentRunId`/`cutoverAttemptId`、wechatBound/identityType，且 started/ended 必须落在
 本次 B 切换时间窗。fallback/m3u8 download 必须实际通过同域 HTTPS URL 完成有界
 下载，不得只看到 create/poll 成功就算通过。
+
+同一切换时间窗内生成/核对 `mediaParserIntegration`：顶层绑定 B `sourceCommit`、实际 `imageDigest`、可信
+`ciRunId` 与 test manifest hash；registry golden、structured JSON golden、query policy、candidate
+ranking/有界 fallback、cache semantics、rich-media compatibility 和 unsafe-pattern policy 每项必须有原始
+hermetic test 清单与通过结果。`evidenceMode` 按能力逐项只能是 `live` 或 `hermetic`：只有取得合法、稳定、
+可重复且不泄露会话/个人数据的真实样本时，才把 `audio`/`livePhoto` 加入真实域名 live cases；否则必须
+使用绑定同一 B source/digest/CI run 的 hermetic contract evidence，并明确 `audio=hermetic`、
+`livePhoto=hermetic`，禁止用不稳定上游页面、缺样本或 aggregate 冒充 live 验收。
 
 结束后再次运行同一 provenance guard。不能用空 code、重放 code 或 fake exchanger 宣称 production
 通过。artifact 不记录 code、openid、token、session 或 secret；request/downloadFile 最终 URL 必须
@@ -2079,7 +3012,8 @@ final acceptance/running digest/B final up event 的 `deploymentRunId`/`cutoverA
 table-scoped no-writer proof、shadow/final identity 隔离和 final 无本轮 shadow/A-B acceptance 的
 runId/taskId/sentinel/outbox（合法 legacy 历史按 source checksum 保留），不伪造 delta/reverse。
 verifier 还逐项重算三轮 93 records、A/B 两份 >=1800 秒观察、固定前端全矩阵、B→A <=300 秒真实 drill、
-最终容器 diff、frontend provenance 与 post-cutover trap。任何缺失都继续修复。全部通过后把 trace 状态
+最终容器 diff、frontend provenance、`mediaParserIntegration` 的 sourceCommit/imageDigest/ciRunId/
+evidenceMode 与 post-cutover trap。任何缺失都继续修复。全部通过后把 trace 状态
 更新为实际结果并同步计划/设计；`final-acceptance.md` 用含 schemaVersion/passed 的 front matter、同目录
 0600 临时文件、fsync + 原子 rename 生成，并记录同一 attempt IDs、`evidenceParentCommit` 与排除该报告
 自身的 `evidencePayloadTreeSha256`，绝不内嵌尚未存在的当前治理 commit SHA。
@@ -2090,7 +3024,11 @@ verifier 还逐项重算三轮 93 records、A/B 两份 >=1800 秒观察、固定
 python3 scripts/verify-acceptance.py --require-complete
 git add artifacts/deploy artifacts/acceptance artifacts/benchmark artifacts/migration artifacts/release artifacts/verification \
   docs/requirements-traceability.md docs/superpowers 约束文件.md
+go test ./internal/policy -count=1
+git diff --cached --check
+git diff --cached --name-only
 git commit -m "docs: record production acceptance evidence"
+test "$(scripts/verify-gitleaks.sh)" = PASS
 python3 scripts/verify-acceptance.py --require-complete --verified-evidence-commit "$(git rev-parse HEAD)"
 git push origin main
 ```

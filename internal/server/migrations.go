@@ -7,11 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"os"
 	"regexp"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/1136623363/watermark-go/internal/config"
 )
 
 //go:embed migrations/*.sql
@@ -32,15 +33,17 @@ var (
 	alterAddIndexKeywordPattern = regexp.MustCompile(`(?is)\bADD\s+(?:KEY|INDEX)\b`)
 )
 
-func runMigrationsFromEnv() error {
-	timeout := time.Duration(envInt("MIGRATION_TIMEOUT_SECONDS", 600)) * time.Second
-	if timeout <= 0 {
-		timeout = 10 * time.Minute
+func RunMigrations(ctx context.Context, cfg config.Config) error {
+	if ctx == nil {
+		return errors.New("migration context is required")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	migrationCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
 
-	db, err := openOptionalMySQL(ctx)
+	db, err := openConfiguredMySQL(migrationCtx, cfg.MySQL.DSN)
 	if err != nil {
 		return err
 	}
@@ -49,7 +52,7 @@ func runMigrationsFromEnv() error {
 	}
 	defer db.Close()
 
-	return runMigrations(ctx, db)
+	return runMigrations(migrationCtx, db)
 }
 
 func runMigrations(ctx context.Context, db *sql.DB) error {
@@ -228,17 +231,4 @@ func splitSQLStatements(sqlText string) []string {
 		clean = append(clean, line)
 	}
 	return strings.Split(strings.Join(clean, "\n"), ";")
-}
-
-func maybeRunMigrationCommand() bool {
-	if len(os.Args) < 2 || strings.TrimSpace(os.Args[1]) != "migrate" {
-		return false
-	}
-	if err := runMigrationsFromEnv(); err != nil {
-		logErrorf("migration failed: %v", err)
-		fmt.Fprintf(os.Stderr, "migration failed: %v\n", err)
-		os.Exit(1)
-	}
-	fmt.Fprintln(os.Stdout, "migration completed")
-	return true
 }

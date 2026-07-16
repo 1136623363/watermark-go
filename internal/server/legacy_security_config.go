@@ -1,50 +1,9 @@
 package server
 
 import (
-	"errors"
 	"fmt"
-	"os"
 	"strings"
 )
-
-func validateCurrentLegacyProductionConfig() error {
-	return validateLegacyProductionConfig(os.Getenv)
-}
-
-func validateLegacyProductionConfig(getenv func(string) string) error {
-	if getenv == nil {
-		return errors.New("environment reader is required")
-	}
-	if !strings.EqualFold(strings.TrimSpace(getenv("APP_ENV")), "production") {
-		return nil
-	}
-
-	checks := []struct {
-		name     string
-		minimum  int
-		allowAES bool
-		required bool
-	}{
-		{name: "ADMIN_PASSWORD", minimum: 12, required: true},
-		{name: "ADMIN_SESSION_SECRET", minimum: 32, required: true},
-		{name: "DOWNLOAD_FALLBACK_TOKEN_SECRET", minimum: 32, required: true},
-		{name: "WECHAT_MINI_APP_SECRET", minimum: 16, required: true},
-	}
-	for _, check := range checks {
-		if err := validateConfiguredSecret(check.name, getenv(check.name), check.minimum, check.allowAES, check.required); err != nil {
-			return err
-		}
-	}
-	if value := strings.TrimSpace(getenv("WECHAT_MINI_APP_ID")); value == "" || isObviousSecretPlaceholder(value) {
-		return errors.New("invalid production configuration: WECHAT_MINI_APP_ID")
-	}
-	if parseEnvironmentBool(getenv("APP_CLIENT_SIGNATURE_REQUIRED"), false) {
-		if err := validateConfiguredSecret("APP_CLIENT_SIGNATURE_KEY", getenv("APP_CLIENT_SIGNATURE_KEY"), 16, true, true); err != nil {
-			return err
-		}
-	}
-	return nil
-}
 
 func validateConfiguredSecret(name, raw string, minimum int, aesLength, required bool) error {
 	value := strings.TrimSpace(raw)
@@ -88,15 +47,4 @@ func isObviousSecretPlaceholder(raw string) bool {
 		}
 	}
 	return false
-}
-
-func parseEnvironmentBool(raw string, fallback bool) bool {
-	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "1", "true", "yes", "y", "on":
-		return true
-	case "0", "false", "no", "n", "off":
-		return false
-	default:
-		return fallback
-	}
 }

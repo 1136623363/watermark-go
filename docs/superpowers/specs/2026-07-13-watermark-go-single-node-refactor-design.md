@@ -13,8 +13,13 @@
 基线；只吸收集中 parser metadata、domain alias 目录、平台 query 策略、音频/图集/Live Photo 和媒体
 候选建模思路。来源、MIT license hash、采用项和拒绝项固定在 `docs/research/` 并由 policy 测试校验。
 
-项目采用 Go 模块化单体：一个 API/后台容器、一个 MySQL 容器、一个 Redis 容器。
-解析引擎仍以 Go 原生解析器为首选，并保留 yt-dlp 与 universal bridge 作为提高样本覆盖率的兜底工具。
+项目采用 Go 模块化单体和单一不可变应用镜像。Compose 同时提供 recovery 与 candidate 两套隔离
+role-set；每组的 API/后台、stateless `parser-helper`、`egress-proxy`、one-shot `data-gate` 必须使用该组
+完全相同的不可变 digest，并拥有本组专属 UDS、`internal: true` parser sandbox、gate receipt 和运行/数据
+identity，禁止跨组共享或串线。A/B 在 promotion 后使用不同 digest，但 helper/proxy/data-gate 都不是第二套
+backend 或独立业务服务，无业务状态或公开业务端口；helper/proxy 无 DB 连接，gate 只接入最小数据面。
+解析引擎仍以 API 内 Go 原生解析器为首选，并保留 sandbox 中 yt-dlp 与 universal bridge 作为提高样本
+覆盖率的兜底工具。
 Docker 镜像只能由 GitHub Actions 构建并推送到 GHCR；当前服务器只执行登录、拉取、迁移和启动，
 不得执行 `docker build`、`docker compose build`、`docker save/load` 或复制镜像层。
 
@@ -194,6 +199,14 @@ parser constructor 必须纯净且零 I/O，只接收注入的 netguard client�
 与 typed config；不得在 package init/import/构造时联网、读环境、创建目录或启动进程。优先结构化 API；
 页面内嵌 JSON 提取必须转义/嵌套感知，并用脱敏合成 golden 覆盖截断、字段换层、登录/风控页、空核心
 字段与多载体分支。一个 parser 的 `Parse(ctx)` 返回完整 Result 或 typed error，不拼装多个吞错 getter。
+短期上游材料由受限 `SessionMaterialProvider` 管理，key 只含 stable platform + exact host，具有 TTL、
+singleflight 与硬容量上限；只有 typed `session_expired` 可在一次 Parse 总预算内触发一次失效/刷新。
+取消、超时、安全拒绝、schema drift、凭据缺失与 internal error 不失效，且绝无源码 fallback。它与微信
+client session 完全隔离，value 不可格式化/序列化，也不进入 header 之外的日志/cache/evidence。
+配置与运行依赖不混为一谈：环境配置只在 Task 2 形成 `ParserConfig`，constructor 接收单一
+`Dependencies{Config, Fetcher, Clock, TokenProvider, Logger, Runner}`。执行顺序上，Task 3 在迁移任何
+production parser 前先建立 typed URL/请求前/DNS/dial/redirect/TLS/response-limit 的 netguard core；
+Task 4 继续完成全树出口与 subprocess proxy。两者之间不得出现可提交的临时裸 HTTP adapter。
 
 URL extractor/canonicalizer 是不联网的纯函数，只接受 HTTP(S)，按 descriptor 保留平台必需 query，剥离
 tracking/未知参数。query 中 capability/会话性质的值不进入日志、错误、cache key 或 evidence；需要
@@ -202,6 +215,8 @@ netguard，禁止“先请求再判断 host”。类型明确区分不可日志�
 与绑定 platform/parser/result schema version 的不可逆 `CacheKey`；不盲目把 HTTP 字符串改为 HTTPS。
 跨 origin/host redirect 必须剥离 Cookie/Authorization/平台会话 header，response header、wire body 与
 解压后 body 都有硬上限，TLS 校验不可关闭。
+catalog golden 逐平台锁定 query policy；至少覆盖 `vid/id/xsec_token/modal_id/v/s/pid`、重复/大小写/空值/
+百分号编码/稳定排序/tracking 剥离，不能只锁平台与 host 总数。
 
 内部解析结果以 `ImageAsset{URL, LivePhotoURL}` 表达静态/动态配对，以 `MediaCandidate` 表达 kind、
 quality、bitrate、尺寸和稳定 source rank。一个 Parse 最多抓取一次上游快照；候选按明确元数据与稳定
@@ -218,19 +233,43 @@ context/lease 取消会终止进程组并清理部分文件。
 失败分为不支持、无效输入、目标拒绝、上游超时、上游拒绝、空媒体和内部错误。
 只对可恢复失败执行有界 fallback；不对相同失败无限重试。
 
-所有 Go HTTP 流量使用统一 netguard transport。yt-dlp/universal 等 subprocess 不能继承外部代理或
-用户配置：yt-dlp 使用 `--ignore-config`、隔离 HOME/XDG 和不可覆盖的 loopback guard proxy；Python
-清空大小写 HTTP(S)/ALL/NO_PROXY 后只注入 guard。guard 对每跳重定向/DNS/CONNECT 重验并限制响应；
-无法强制走 guard 的工具在 production 禁用。m3u8 的远程 manifest/子清单/分片全部由 Go 有界预取并
-重写到受控临时根，ffmpeg 只读本地 file，不启用任何联网/crypto/concat/data 协议。
+所有 Go HTTP 流量使用统一 netguard transport。API 不直接启动 yt-dlp/universal：只经 shared UDS 的
+有界、鉴权 job protocol 交给同一镜像的 `parser-helper`。helper 只接入 Docker `internal: true` sandbox
+network，没有外网/data network；同一 network 唯一双网成员 `egress-proxy` 执行每跳
+CONNECT authority、DNS 全部结果、实际 dial IP、descriptor host policy、tunnel wire bytes/并发/时长校验。
+因此第三方 raw socket 即使忽略代理变量也没有外网路由。proxy 明确不做 TLS MITM，也不能声称读取
+HTTPS redirect/header/解压 body；helper 不接收 Cookie/Auth/平台秘密，credentialed 或无法证明 redirect
+header 行为的 universal descriptor 在 production 禁用。解压资源由 instrumented child fetch layer 与
+helper cgroup memory/CPU/PID/disk、UDS output limits 隔离，超限杀 job 且不得影响 API/返回成功。
+helper 内 yt-dlp 使用 `--ignore-config`、隔离 HOME/XDG 和不可覆盖的 guard proxy；Python 清空大小写
+HTTP(S)/ALL/NO_PROXY 后只注入 guard。Compose policy、CI integration、runtime inspect 与 handshake
+任一无法证明 network/image/command/UDS identity 时 production fallback fail closed，不在 API 内降级
+执行。m3u8 的远程 manifest/子清单/分片全部由 Go 有界预取并重写到受控临时根，ffmpeg 只读本地 file，
+不启用任何联网/crypto/concat/data 协议。
+
+上述 helper/proxy 边界对 recovery/candidate 两组分别成立，API 只能访问本组 UDS，proxy 只能服务本组
+sandbox。opaque music provider 配置只用于识别“已配置”和安全迁移；本轮没有 production helper consumer，
+依赖它的 universal/music descriptor 固定返回 `credential_required`/disabled，原值或可逆编码不得进入
+UDS job、helper/child env、argv、日志、错误或 output。Sohu token 只能由 API 进程内 native parser 的窄
+`TokenProvider` 消费，不得下发 helper/proxy。
 
 ## 7. 数据与迁移
 
 保留旧系统的核心表、已有数据和数据语义：解析结果、解析尝试、客户端 session、运行配置、平台样本、
-平台运行、任务、后台账号和审计日志。迁移采用嵌入式顺序 SQL，启动时只做向前、幂等迁移。
+平台运行、任务、后台账号和审计日志。迁移采用嵌入式顺序 SQL，但 `serve` 启动时绝不隐式迁移；只有
+one-shot `watermark-go data-gate` 可以执行或复验向前、幂等迁移，receipt 通过后才可构造 API/listener/
+worker/helper/proxy。
 
 单机任务表包含类型、payload、状态、进度、尝试次数、最大尝试、`locked_by`、
 `locked_until`、下一次执行时间、错误和结果。启动时释放已过期租约，不删除未完成任务。
+
+`data-gate` 的 `GATE_MODE=apply` 才能执行 schema migration、typed import、scrub、count/checksum 与当前
+mode 的 no-writer/position gate；`GATE_MODE=revalidate` 必须使用只读凭据，只复验 schema/checksum、
+accepted-write/outbox 坐标、DB/Redis namespace identity 与 config hash，类型接口和 DB privilege 双重禁止
+DDL/import/scrub/write。每次 shadow/final/drill/cutover/rollback 都必须以当前 run/attempt
+`--force-recreate --no-deps` 对应 role 的 gate，核对新容器 start time 与新 receipt；旧退出容器、旧 receipt
+或单独依赖 `service_completed_successfully` 均不得放行。receipt 绑定 role/stage、完整 digest、run/attempt、
+schema、DB/Redis/outbox、输入 snapshot 与 config hash，并原子写入本组专属只读挂载给 API 的 volume。
 
 源数据引擎与目标引擎必须分开建模。当前实机源是 MariaDB 11.8.6，目标是 MySQL 8.4；discovery 已知
 `@@log_bin=0`、`binlog_format=MIXED`、`gtid_strict_mode=0`，因此实际分支固定
@@ -238,7 +277,10 @@ context/lease 取消会终止进程组并清理部分文件。
 可追的 delta，也不能用 `updated_at` 伪造增量。备份只允许由 `deploy/image-lock.json` 固定官方 digest
 的 MariaDB recovery image 在 Compose `migration-tools` profile 中完成；禁止裸 `docker run`、裸 tag、
 本地 build 或把 MariaDB 数据目录直接挂给 MySQL。备份先恢复到隔离 MariaDB clone，再由 typed importer
-显式映射类型、默认值、字符集和时间/JSON/数值语义到 MySQL 8.4。
+显式映射类型、默认值、字符集和时间/JSON/数值语义到 MySQL 8.4。源 MariaDB 只能经 host-before 已验证的
+精确 Unix socket `/run/mysqld/mysqld.sock` 读取：固定 wrapper 使用 `network_mode: none` 与 long-syntax
+read-only bind（`create_host_path: false`），不得使用 host network、修改源监听或挂载源 data directory；
+`data-gate` 只连接隔离 clone 和目标 MySQL，不直接连接宿主源。
 
 当前 final gate 的唯一合法数据路径是：对 watermark 表执行 table-scoped fence，记录连接与 writer
 identity，以重复 hash 证明无 writer，在该受控窗口重新生成 final consistent full snapshot，导入全新
@@ -253,6 +295,17 @@ production outbox，也不采用“跑完再清理 shadow 写入”的方案。f
 生产 full import 与 scrub 后的生产数据；任何 API/listener/worker 都只能在对应 migration/import/checksum
 gate 通过后启动；final checksum 必须证明无本轮 shadow/A-B acceptance 的 runId/taskId/sentinel/outbox，
 但 legacy snapshot 中原有合法历史 platform_runs/测试记录按 source checksum 保留。
+
+Redis identity 不是只有地址。每次 A-shadow、B-shadow、final/recovery 都必须使用含 role+stage 的稳定
+`REDIS_NAMESPACE`，shadow 还绑定 run；A/B shadow namespace 彼此不同且都不等于 final，drill/final/
+rollback 只使用已锁定的同一 final namespace。cache、lock、rate-limit、task/outbox key builder 强制加前缀，
+并由 gate receipt、API startup、runtime inspect 与 acceptance artifact 四方对账。
+
+A bootstrap 失败后，只要 route/access log/DB/outbox 任一证明接受过写入，该确切 final DB/outbox 就成为
+retained fact source。失败证据必须记录 predecessor DB identity、accepted-write 坐标/数量、稳定 checksum、
+outbox high-water 与 `pending_reconcile`；后续 A/A' 必须先在 fence 下复用并 reconcile，或通过无丢失的
+forward-only migration/replay 迁到唯一 successor 并证明 predecessor→successor checksum。不得重做 full
+覆盖、丢卷或回放早期 snapshot；只有 DB/outbox/route 三方都证明零写入时才可重建。
 
 只有 discovery 证明 `oldServicePresent=true`，并验证旧 service/route/writer/DSN identity 时，才启用
 conditional legacy migration/reverse：回滚前栅栏/排空，把 outbox reverse replay 应用到唯一指定、
@@ -274,6 +327,11 @@ production 只接受已知 APP_ENV，要求 MySQL、真实非占位 WeChat AppID
 下载密钥；Redis 可降级。下载旧 secret 名只在 typed config 加载边界迁移一次，业务只读 canonical
 config。可选 Weibo/Xigua Cookie 也仅由 config 读取并传入 parser，错误/日志不回显任何值。
 运营配置写入 MySQL `runtime_settings`，本地 JSON 只允许开发模式使用。
+
+Compose 不得用 service-level `env_file:` 把整份运行环境注入容器，必须按 service 逐键列 allowlist。API
+只获得本 role 的数据 identity 与必要 typed API/native secret；data-gate 只获得 clone/target DSN、run/
+receipt identity；helper/proxy 不得获得 DB/Redis、微信、管理员、下载、Cookie、Sohu 或 music provider
+secret。music secret 永不出 API 配置边界，Sohu token 仅供 API-native `TokenProvider`。
 
 仓库必须忽略并通过 CI 扫描以下内容：
 
@@ -319,9 +377,12 @@ Actions second checkout 固定前端 provenance 并在 runner 跑 Node/服务契
 
 发布采用 A→B 两个不可变角色，而不是让全部证据冒充同一 commit/digest：A 是经 shadow、真实域名、
 真微信和 `A observation>=1800s` 完整验收后才成立的 recovery digest；B 是其后由 promotion commit
-构建的 final digest，且 `recoveryDigest != finalDigest`。A→B source diff allowlist 只允许精确路径
-`release/promotion-marker.txt` 和 OCI revision；marker 必须被 `.dockerignore` 排除，任何 Dockerfile
-都不得 COPY 进 rootfs。Go、依赖、Dockerfile、可执行输入、config、migration 或 schema 的变化均拒绝。
+构建的 final digest，且 `recoveryDigest != finalDigest`。唯一 `scripts/promote.sh` 先生成 parent 为 A source、
+diff 只含脱敏 A evidence 的 immutable `evidence/recovery-<runId>` ref；marker 绑定 evidence commit OID、
+排除自身的 payload hash、A digest/source commit 与 promotionRunId。marker commit 的 parent 仍是 A source，
+A→B tracked source diff 唯一允许 `release/promotion-marker.txt`；OCI revision 是 CI 写入 OCI config 的 label，
+不是 source path/diff。marker 必须被 `.dockerignore` 排除且任何 Dockerfile 不得 COPY；CI fetch 并重验
+immutable evidence ref，拒绝其他 tracked 变化。
 机器比较 A/B 的 rootfs、app binary、tool versions 与 schema，除明确的 OCI label 白名单差异外必须
 一致；B 仍须完成独立 shadow 验收。
 
@@ -336,9 +397,11 @@ full-history，并让扫描证据覆盖 B commit。B attestation、equivalence �
 
 ## 10. 单机部署与资源保护
 
-新栈只使用 Compose project `watermark-go`，shadow/final/recovery/migration-tools 由 profile 和独立
-网络/卷隔离。API bind 严格限制为 shadow `127.0.0.1:15001` 或 final `127.0.0.1:5001`；MySQL/Redis
-不发布宿主端口。正式运行配置固定在仓库外 `/var/lib/watermark-go/runtime.env`，权限 0600。
+新栈只使用 Compose project `watermark-go`。profiles 分离 recovery、candidate 与 migration-tools；
+shadow/final 是各 role-set 启动时显式绑定并写入 receipt 的 stage/data identity，不是共享可变 service 名。
+两组各自拥有 API/helper/proxy/data-gate、UDS、sandbox、receipt 与数据 identity，组内四个应用 role 使用同一
+digest。API bind 严格限制为 shadow `127.0.0.1:15001` 或 final `127.0.0.1:5001`；MySQL/Redis 不发布宿主
+端口。正式运行配置固定在仓库外 `/var/lib/watermark-go/runtime.env`，权限 0600。
 
 当前 discovery 是部署设计的事实输入，而不是“存在旧服务”的假设：`oldServicePresent=false`，没有
 运行或停止的 watermark 容器、进程、systemd unit 或本地应用镜像，5001/15001 均空闲；
@@ -358,28 +421,35 @@ API/listener/worker：
 
 1. 保存宿主机与现网快照、运行 route 权威身份和 `before-after-containers.json` 的 before 集合，复验
    MariaDB 能力与 table-scoped no-writer 条件；
-2. 用固定官方 digest 的 MariaDB recovery image 完成备份、隔离 MariaDB 恢复、typed importer 到
-   disposable MySQL 8.4 clone，并选择 `chosenMigrationMode=final_full_no_binlog`；
+2. 用固定官方 digest 的 MariaDB recovery image 经已验证的 `/run/mysqld/mysqld.sock`、`network_mode:none`
+   和只读 bind 完成备份，隔离 MariaDB 恢复、typed importer 到 disposable MySQL 8.4 clone，并选择
+   `chosenMigrationMode=final_full_no_binlog`；
 3. 只从 GHCR 拉取 recovery candidate A，校验实际 RepoDigest、attestation、OCI source/revision；对
-   独立 shadow DB/schema 与独立 Redis namespace 完成 migration/import/checksum gate 后，才以
+   独立 shadow DB/schema 与独立 Redis namespace 以 `GATE_MODE=apply` force-recreate A gate，并完成
+   migration/import/checksum 与新 receipt 核验后，才以
    `127.0.0.1:15001` 启动 A shadow；
 4. A shadow 隔离全验覆盖服务契约、后台/RBAC/CSRF、Redis 降级恢复、pending/outbox 恢复和三轮 93
    样本基准；可选 LAN 只在此后用受防火墙限制的临时 override，结束立即撤销；
 5. 对源表执行 table-scoped fence 和重复 hash 证明无 writer，生成全新 production full，经 importer
-   写入干净 final DB；migration/import/scrub/checksum gate 通过且无本轮 shadow/A-B acceptance 的
+   写入干净 final DB；force-recreate A apply gate 的 migration/import/scrub/checksum receipt 通过且无本轮
+   shadow/A-B acceptance 的
    runId/taskId/sentinel/outbox 后，
    才启动 A final；
 6. 通过运行 route 权威渠道把 A 接入真实域名，使用已登录 DevTools/真机的一次性 wx.login code
    readiness；未就绪不得进入写栅栏或切流。readiness code 不保存/不复用，A 正式 session 前重新
    `wx.login` 获取全新 code。A 必须通过真微信、固定前端全矩阵并完成请求真实
    `https://watermark.bxsn.cn/api/health` 的 `A observation>=1800s`，才成为 recovery digest；
-7. A 验证后才创建只改 `release/promotion-marker.txt`/OCI revision 的 B promotion commit。执行
-   A→B source diff allowlist、rootfs/app binary/tool versions/schema 等价比较，确认
+7. A 验证后才由 `scripts/promote.sh` 固化 recovery evidence ref，并创建 tracked diff 只改
+   `release/promotion-marker.txt` 的 B promotion commit；marker 绑定 evidence OID/hash、A digest/run，OCI
+   revision 仅是 CI label。执行 A→B source diff allowlist、rootfs/app binary/tool versions/schema 等价比较，确认
    `recoveryDigest != finalDigest`，再把 B shadow 隔离全验写入 `final-shadow-e2e.json`；
-8. 在同一兼容 final DB 上执行当前适用分支真实演练：真实 route 暂接 B 后做 B→A 真实 drill，要求
+8. 执行当前适用分支真实演练：在同一兼容 final DB/Redis namespace 上先以只读
+   `GATE_MODE=revalidate` force-recreate A/B 两个 gate，
+   生成绑定同一 drillRunId、A/B digest、schema/config、accepted-write/outbox 的两份 receipt，再由真实 route
+   暂接 B 后做 B→A 真实 drill，要求
    `durationSeconds<=300`、`healthPassed=true`、`dataPassed=true`、routePassed 和 DB identity 均通过，
    演练后恢复 A；
-9. `artifacts/deploy/state-before.json` 锁定 A/B digest+attestation+config/DB identity、route、
+9. `artifacts/deploy/state-before.json` 锁定 A/B digest+attestation+config/DB/Redis identity、route、
    `schemaCompatibleWithRecovery=true` 与 `schemaCompatibleWithFinal=true`；Task 18 才 fence/drain A 并
    把 final digest B 接入同一兼容 final DB 和 `127.0.0.1:5001`；
    `artifacts/deploy/running-digest.txt` 在 Task 17 仍证明 A 在运行。Task 18 生成唯一
@@ -395,8 +465,9 @@ runtime/data identity、时间、attempt IDs 和 `localBuild=false`/`localLoad=f
 Task 18 只在 B final inspect 通过后补 final up，失败/回退不能留下假 B 成功事件。
 
 在 A 验证前不存在可信 recovery。A bootstrap 任一步失败只能 fence/drain A、撤回新 route、恢复原
-502 路由，保留 final DB/outbox 已接受写入供调查并标记 `FAILED`；不得声称 5 分钟健康回滚或已经建立
-recovery digest。A 验证后，previous digest 分支就是 B→A；它是实际
+502 路由并标记 `FAILED`；一旦存在已接受写，final DB/outbox 必须按 retained fact source 复用/reconcile 或
+无丢失地前移，不能当调查副本丢弃或用早期 snapshot 覆盖。不得声称 5 分钟健康回滚或已经建立 recovery
+digest。A 验证后，previous digest 分支就是 B→A；它是实际
 `rollbackMode=absent_two_stage` 的唯一当前适用分支。`artifacts/deploy/rollback-drill.txt` 中
 `branches.initialDeployment.applicable=false` 且
 `result=not_applicable_no_verified_legacy_service`。
@@ -407,6 +478,13 @@ rollback/pass。只有未来 discovery 证明 `oldServicePresent=true` 且精确
 才 applicable，并按唯一顺序完成新服务 fence/drain、outbox reverse replay 到唯一指定且实际承接
 回滚流量的隔离旧库克隆、checksum、原子切换旧服务 DSN 到同一克隆、验证连接身份、恢复旧路由；
 禁止用早期备份覆盖切流后新写入。
+
+Task 18 在任何 fence 前，以本次 `deploymentRunId`/`cutoverAttemptId` 和只读凭据 force-recreate A
+recovery gate 与 B candidate gate：前者生成 rollback receipt，后者生成 final receipt；两份 receipt 绑定
+A/B digest、各自 config、同一 final schema/DB/Redis namespace、当前 accepted-write/outbox 坐标和本次
+attempt，state 锁定其 hash。apply receipt、旧 Task 17 receipt 或可写调用均拒绝。B→A 在 300 秒窗口内
+以 current coordinate 不回退的 quick-check 消费预生成 A receipt；schema/config/data identity 漂移则进入
+受控只读 FAILED。
 
 Task 18 在切 B 前安装统一 post-cutover failure trap，并在步骤 3、4、5、6 任一失败时立即
 fence/drain 新写，自动调用已演练且适用的 rollback 分支，正常路径自动完成 B→A。步骤全部通过前的
@@ -485,6 +563,10 @@ parserInvocationId。验证器从 records 重算 completed/success/wall-clock，
   cacheRestore、performance、fallbackCreate/fallbackPoll/fallbackDownload、
   m3u8Create/m3u8Poll/m3u8Download、video、gallery；每项都有 requestId 和 passed。fallback/m3u8
   必须实际通过同域 HTTPS 下载，create/poll 成功不能代替 download。
+- 最终 `mediaParserIntegration` 机器证据必须绑定 B sourceCommit、实际 imageDigest、可信 ciRunId 和原始
+  test manifest，逐项关闭 registry、structured JSON、query policy、candidate ranking/总预算、cache
+  semantics、rich-media compatibility 与 unsafe-pattern policy。audio/Live Photo 只有合法稳定真实样本时
+  才标 `evidenceMode=live`；否则使用绑定同一 B identity 的 hermetic contract，不能冒充 live。
 - 所有 shadow/recovery/final E2E 只记录 route template、same-origin/HTTPS、状态、字节数/内容 hash 和
   requestId；share/task capability、ticket、原始媒体/分享 URL、完整 path/query 必须省略或不可逆 hash。
 

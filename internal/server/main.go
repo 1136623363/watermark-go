@@ -7,20 +7,18 @@ import (
 	"net"
 	"net/http"
 	neturl "net/url"
-	"os"
-	"os/signal"
 	"regexp"
 	"sort"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/gin-gonic/gin"
 
-	adminweb "watermark-backend/internal/admin/web"
-	"watermark-backend/internal/parsers/native"
-	"watermark-backend/internal/runtimecfg"
-	"watermark-backend/internal/utils"
+	adminweb "github.com/1136623363/watermark-go/internal/admin/web"
+	"github.com/1136623363/watermark-go/internal/config"
+	"github.com/1136623363/watermark-go/internal/parsers/native"
+	"github.com/1136623363/watermark-go/internal/runtimecfg"
+	"github.com/1136623363/watermark-go/internal/utils"
 )
 
 type httpResponse struct {
@@ -127,31 +125,36 @@ var platformNames = map[string]string{
 
 var looseURLPattern = regexp.MustCompile(`https?://[^\s]+`)
 
-func Run() {
-	if maybeRunMigrationCommand() {
-		return
+func startHTTPServer(ctx context.Context, cfg config.Config, ready func(*http.Server) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-	startHTTPServer()
-}
-
-func startHTTPServer() {
-	if err := validateCurrentLegacyProductionConfig(); err != nil {
-		panic(err)
-	}
+	setApplicationDownloadConfig(cfg.Download)
+	defer setApplicationDownloadConfig(config.DownloadConfig{})
 	logResources, err := setupLogging()
 	if err != nil {
-		panic(err)
+		return err
 	}
 	defer logResources.Close()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
 	if err := runtimecfg.Load(); err != nil {
 		logErrorf("load runtime settings failed: %v", err)
-		panic(err)
+		return err
 	}
 	applyRuntimeSettings()
-	if err := initInfrastructure(context.Background()); err != nil {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := initInfrastructure(ctx); err != nil {
 		logErrorf("initialize infrastructure failed: %v", err)
-		panic(err)
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		closeInfrastructure()
+		return err
 	}
 	seedSharedRuntimeSettingsIfMissing()
 	if loadSharedRuntimeSettings(true) {
@@ -180,10 +183,13 @@ func startHTTPServer() {
 	sub, err := adminweb.TemplatesFS()
 	if err != nil {
 		logErrorf("load templates failed: %v", err)
-		panic(err)
+		return err
 	}
 
-	tmpl := template.Must(template.ParseFS(sub, "*.html"))
+	tmpl, err := template.ParseFS(sub, "*.html")
+	if err != nil {
+		return err
+	}
 	r.SetHTMLTemplate(tmpl)
 
 	r.GET("/", func(c *gin.Context) {
@@ -336,37 +342,56 @@ func startHTTPServer() {
 	r.GET("/api/internal/download/file/:key", handleInternalDownloadFallbackFile)
 	r.GET("/api/internal/download/proxy/:ticket", handleInternalDownloadFallbackProxy)
 
-	port := strings.TrimSpace(os.Getenv("PORT"))
-	if port == "" {
-		port = "5001"
-	}
-
 	srv := &http.Server{
-		Addr:              ":" + port,
+		Addr:              ":" + cfg.HTTP.Port,
 		Handler:           r,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
 	logInfof("http server starting addr=%s", srv.Addr)
-	go func() {
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			logErrorf("http server stopped unexpectedly: %v", err)
-			panic(err)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	listener, err := listenHTTP(ctx, srv.Addr)
+	if err != nil {
+		return err
+	}
+	defer listener.Close()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if ready != nil {
+		if err := ready(srv); err != nil {
+			return err
 		}
-	}()
-
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
-	<-quit
-	logInfof("shutdown signal received")
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := srv.Shutdown(ctx); err != nil {
-		logErrorf("http server shutdown failed: %v", err)
-		return
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := srv.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		logErrorf("http server stopped unexpectedly: %v", err)
+		return err
 	}
 	logInfof("http server stopped")
+	return nil
+}
+
+func listenHTTP(ctx context.Context, address string) (net.Listener, error) {
+	if ctx == nil {
+		return nil, errors.New("listener context is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", address)
+	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		_ = listener.Close()
+		return nil, err
+	}
+	return listener, nil
 }
 
 func unsupportedHandler(c *gin.Context) {
