@@ -11,8 +11,8 @@ import (
 	"testing"
 )
 
-func TestProductionParsersNeverEmbedCookieHeaderLiteralsOrRestoreInstructions(t *testing.T) {
-	root := filepath.Join(repositoryRoot(t), "internal", "parsers")
+func TestEveryProductionParserRejectsEmbeddedCookieHeaders(t *testing.T) {
+	root := filepath.Join(repositoryRoot(t), "internal", "parser")
 	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -50,6 +50,10 @@ func TestParserCookiePolicyCoversAssignmentsCallsConcatenationAndAliases(t *test
 		"package p\nfunc f(){ const headerName = \"Cookie\"; const headerValue = \"embedded-\" + \"cookie-material\"; req.Header.Add(headerName, headerValue) }\n",
 		"package p\nfunc f(){ cookie := \"embedded-\" + \"cookie-material\"; headers[HttpHeaderCookie] = cookie }\n",
 		"package p\nfunc f(){ headerName := \"Cookie\"; value := \"embedded-\" + \"cookie-material\"; req.Header.Set(headerName, value) }\n",
+		"package p\nfunc f(){ headerName := \"safe\"; headerName = \"Cookie\"; value := \"embedded-\" + \"cookie-material\"; req.Header.Set(headerName, value) }\n",
+		"package p\nfunc dynamic() string{return \"\"}; func f(){ headerName := \"Cookie\"; value := \"embedded-\" + \"cookie-material\"; req.Header.Set(headerName, value); headerName = dynamic() }\n",
+		"package p\nfunc f(){ headers[\"Cookie\"] = []string{\"embedded-\" + \"cookie-material\"} }\n",
+		"package p\nfunc f(){ headers[HttpHeaderCookie] = string(\"embedded-\" + \"cookie-material\") }\n",
 	}
 	for index, source := range fixtures {
 		violation, err := scanParserCookiePolicy([]byte(source))
@@ -60,30 +64,39 @@ func TestParserCookiePolicyCoversAssignmentsCallsConcatenationAndAliases(t *test
 			t.Fatalf("parser Cookie syntax fixture %d bypassed the policy", index)
 		}
 	}
-	allowed := "package p\nimport \"os\"\nfunc f(){ headers[HttpHeaderCookie] = os.Getenv(\"XIGUA_COOKIE\") }\n"
+	allowed := "package p\nfunc f(configured string){ headers[HttpHeaderCookie] = configured }\n"
 	if violation, err := scanParserCookiePolicy([]byte(allowed)); err != nil || violation {
-		t.Fatal("parser Cookie policy rejected environment injection")
+		t.Fatal("parser Cookie policy rejected typed runtime injection")
+	}
+	shadowed := "package p\nconst headerName = \"Cookie\"\nfunc dynamic() string { return \"\" }\nfunc f(){ headerName := dynamic(); req.Header.Set(headerName, dynamic()) }\n"
+	if violation, err := scanParserCookiePolicy([]byte(shadowed)); err != nil || violation {
+		t.Fatal("parser Cookie policy confused a shadowed local with a package alias")
 	}
 }
 
 func TestRepositoryAuditScansParserCookiePolicyInIndexWhenWorktreeIsSafe(t *testing.T) {
-	repo := newAuditRepository(t)
-	directory := filepath.Join(repo, "internal", "parsers", "native")
-	if err := os.MkdirAll(directory, 0o700); err != nil {
-		t.Fatal("create parser fixture directory")
-	}
-	path := filepath.Join(directory, "fixture.go")
-	material := "embedded-" + "cookie-material"
-	writeAuditFixture(t, path, "package native\nfunc f(){ headers[HttpHeaderCookie] = \""+material+"\" }\n")
-	gitTestOutput(t, repo, "add", "internal/parsers/native/fixture.go")
-	writeAuditFixture(t, path, "package native\n")
+	for _, root := range []string{"internal/parser/native", "internal/parsers/native"} {
+		root := root
+		t.Run(strings.ReplaceAll(root, "/", "-"), func(t *testing.T) {
+			repo := newAuditRepository(t)
+			directory := filepath.Join(repo, filepath.FromSlash(root))
+			if err := os.MkdirAll(directory, 0o700); err != nil {
+				t.Fatal("create parser fixture directory")
+			}
+			path := filepath.Join(directory, "fixture.go")
+			material := "embedded-" + "cookie-material"
+			writeAuditFixture(t, path, "package native\nfunc f(){ headers[HttpHeaderCookie] = \""+material+"\" }\n")
+			gitTestOutput(t, repo, "add", filepath.ToSlash(filepath.Join(root, "fixture.go")))
+			writeAuditFixture(t, path, "package native\n")
 
-	audit, err := auditGitRepository(repo)
-	if err != nil {
-		t.Fatal("audit parser Cookie policy")
-	}
-	if !auditHasKind(audit, "parser-cookie-literal") {
-		t.Fatal("staged parser Cookie literal was hidden by a safe worktree file")
+			audit, err := auditGitRepository(repo)
+			if err != nil {
+				t.Fatal("audit parser Cookie policy")
+			}
+			if !auditHasKind(audit, "parser-cookie-literal") {
+				t.Fatal("staged parser Cookie literal was hidden by a safe worktree file")
+			}
+		})
 	}
 }
 
@@ -92,7 +105,7 @@ func scanParserCookiePolicy(source []byte) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	aliases := make(map[*ast.Object]ast.Expr)
+	aliases := make(map[*ast.Object][]ast.Expr)
 	ast.Inspect(file, func(node ast.Node) bool {
 		switch typed := node.(type) {
 		case *ast.GenDecl:
@@ -110,12 +123,12 @@ func scanParserCookiePolicy(source []byte) (bool, error) {
 						valueIndex = len(values.Values) - 1
 					}
 					if name.Obj != nil {
-						aliases[name.Obj] = values.Values[valueIndex]
+						aliases[name.Obj] = append(aliases[name.Obj], values.Values[valueIndex])
 					}
 				}
 			}
 		case *ast.AssignStmt:
-			if typed.Tok != token.DEFINE || len(typed.Rhs) == 0 {
+			if (typed.Tok != token.DEFINE && typed.Tok != token.ASSIGN) || len(typed.Rhs) == 0 {
 				return true
 			}
 			for index, left := range typed.Lhs {
@@ -127,7 +140,7 @@ func scanParserCookiePolicy(source []byte) (bool, error) {
 				if rightIndex >= len(typed.Rhs) {
 					rightIndex = len(typed.Rhs) - 1
 				}
-				aliases[name.Obj] = typed.Rhs[rightIndex]
+				aliases[name.Obj] = append(aliases[name.Obj], typed.Rhs[rightIndex])
 			}
 		}
 		return true
@@ -169,7 +182,7 @@ func scanParserCookiePolicy(source []byte) (bool, error) {
 	return unsafe, nil
 }
 
-func isCookieHeaderExpression(expression ast.Expr, aliases map[*ast.Object]ast.Expr) bool {
+func isCookieHeaderExpression(expression ast.Expr, aliases map[*ast.Object][]ast.Expr) bool {
 	switch typed := expression.(type) {
 	case *ast.Ident:
 		if typed.Name == "HttpHeaderCookie" {
@@ -177,45 +190,80 @@ func isCookieHeaderExpression(expression ast.Expr, aliases map[*ast.Object]ast.E
 		}
 	default:
 	}
-	value, ok := resolveParserString(expression, aliases, make(map[*ast.Object]bool))
-	return ok && strings.EqualFold(strings.TrimSpace(value), "cookie")
+	for _, value := range resolveParserStrings(expression, aliases, make(map[*ast.Object]bool)) {
+		if strings.EqualFold(strings.TrimSpace(value), "cookie") {
+			return true
+		}
+	}
+	return false
 }
 
-func isLiteralDerivedString(expression ast.Expr, aliases map[*ast.Object]ast.Expr) bool {
-	value, ok := resolveParserString(expression, aliases, make(map[*ast.Object]bool))
-	return ok && strings.TrimSpace(value) != ""
+func isLiteralDerivedString(expression ast.Expr, aliases map[*ast.Object][]ast.Expr) bool {
+	for _, value := range resolveParserStrings(expression, aliases, make(map[*ast.Object]bool)) {
+		if strings.TrimSpace(value) != "" {
+			return true
+		}
+	}
+	return false
 }
 
-func resolveParserString(expression ast.Expr, aliases map[*ast.Object]ast.Expr, resolving map[*ast.Object]bool) (string, bool) {
+func resolveParserStrings(expression ast.Expr, aliases map[*ast.Object][]ast.Expr, resolving map[*ast.Object]bool) []string {
 	switch typed := expression.(type) {
 	case *ast.BasicLit:
 		if typed.Kind != token.STRING {
-			return "", false
+			return nil
 		}
 		value, err := strconv.Unquote(typed.Value)
-		return value, err == nil
+		if err != nil {
+			return nil
+		}
+		return []string{value}
 	case *ast.BinaryExpr:
 		if typed.Op != token.ADD {
-			return "", false
+			return nil
 		}
-		left, leftOK := resolveParserString(typed.X, aliases, resolving)
-		right, rightOK := resolveParserString(typed.Y, aliases, resolving)
-		return left + right, leftOK && rightOK
+		left := resolveParserStrings(typed.X, aliases, resolving)
+		right := resolveParserStrings(typed.Y, aliases, resolving)
+		result := make([]string, 0, len(left)*len(right))
+		for _, leftValue := range left {
+			for _, rightValue := range right {
+				result = append(result, leftValue+rightValue)
+			}
+		}
+		return result
 	case *ast.ParenExpr:
-		return resolveParserString(typed.X, aliases, resolving)
+		return resolveParserStrings(typed.X, aliases, resolving)
+	case *ast.CompositeLit:
+		var result []string
+		for _, element := range typed.Elts {
+			if pair, ok := element.(*ast.KeyValueExpr); ok {
+				element = pair.Value
+			}
+			result = append(result, resolveParserStrings(element, aliases, resolving)...)
+		}
+		return result
+	case *ast.CallExpr:
+		name, ok := typed.Fun.(*ast.Ident)
+		if !ok || name.Name != "string" || len(typed.Args) != 1 {
+			return nil
+		}
+		return resolveParserStrings(typed.Args[0], aliases, resolving)
 	case *ast.Ident:
 		if typed.Obj == nil || resolving[typed.Obj] {
-			return "", false
+			return nil
 		}
-		value, exists := aliases[typed.Obj]
-		if !exists {
-			return "", false
+		values := aliases[typed.Obj]
+		if len(values) == 0 {
+			return nil
 		}
 		resolving[typed.Obj] = true
-		resolved, ok := resolveParserString(value, aliases, resolving)
-		delete(resolving, typed.Obj)
-		return resolved, ok
+		defer delete(resolving, typed.Obj)
+		var result []string
+		for _, value := range values {
+			result = append(result, resolveParserStrings(value, aliases, resolving)...)
+		}
+		return result
 	default:
-		return "", false
+		return nil
 	}
 }

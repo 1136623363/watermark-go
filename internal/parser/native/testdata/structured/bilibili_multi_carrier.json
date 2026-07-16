@@ -1,0 +1,14 @@
+{
+  "synthetic": true,
+  "code": 0,
+  "data": {
+    "bvid": "BV1MULTI",
+    "title": "multi carrier fixture",
+    "pages": [{"cid": 10004}],
+    "owner": {"mid": 44, "name": "fixture-author"}
+  },
+  "apollo": {
+    "synthetic": true,
+    "untrusted": {"ignored": "synthetic-extra"}
+  }
+}

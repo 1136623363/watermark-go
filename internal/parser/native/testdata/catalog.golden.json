@@ -1,0 +1,568 @@
+{
+  "platforms": [
+    {
+      "key": "douyin",
+      "displayName": "抖音",
+      "aliases": null,
+      "hostRules": [
+        {
+          "host": "v.douyin.com",
+          "includeSubdomains": true
+        },
+        {
+          "host": "www.iesdouyin.com",
+          "includeSubdomains": true
+        },
+        {
+          "host": "www.douyin.com",
+          "includeSubdomains": true
+        }
+      ],
+      "capabilities": 15,
+      "priority": 0,
+      "queryKeys": [
+        "modal_id"
+      ],
+      "supportsId": true,
+      "maxRequests": 4,
+      "maxRedirects": 3
+    },
+    {
+      "key": "kuaishou",
+      "displayName": "快手",
+      "aliases": null,
+      "hostRules": [
+        {
+          "host": "v.kuaishou.com",
+          "includeSubdomains": true
+        },
+        {
+          "host": "www.kuaishou.com",
+          "includeSubdomains": true
+        }
+      ],
+      "capabilities": 3,
+      "priority": 1,
+      "queryKeys": [
+        "id",
+        "photoid"
+      ],
+      "supportsId": false,
+      "maxRequests": 4,
+      "maxRedirects": 3
+    },
+    {
+      "key": "zuiyou",
+      "displayName": "最右",
+      "aliases": null,
+      "hostRules": [
+        {
+          "host": "share.xiaochuankeji.cn",
+          "includeSubdomains": true
+        }
+      ],
+      "capabilities": 1,
+      "priority": 2,
+      "queryKeys": [
+        "pid"
+      ],
+      "supportsId": false,
+      "maxRequests": 4,
+      "maxRedirects": 3
+    },
+    {
+      "key": "xigua",
+      "displayName": "西瓜视频",
+      "aliases": [
+        "ixigua"
+      ],
+      "hostRules": [
+        {
+          "host": "v.ixigua.com",
+          "includeSubdomains": true
+        },
+        {
+          "host": "www.ixigua.com",
+          "includeSubdomains": true
+        },
+        {
+          "host": "m.ixigua.com",
+          "includeSubdomains": true
+        }
+      ],
+      "capabilities": 1,
+      "priority": 3,
+      "queryKeys": [
+        "id"
+      ],
+      "supportsId": true,
+      "maxRequests": 4,
+      "maxRedirects": 3
+    },
+    {
+      "key": "pipixia",
+      "displayName": "皮皮虾",
+      "aliases": null,
+      "hostRules": [
+        {
+          "host": "h5.pipix.com",
+          "includeSubdomains": true
+        }
+      ],
+      "capabilities": 3,
+      "priority": 4,
+      "queryKeys": [
+        "id"
+      ],
+      "supportsId": true,
+      "maxRequests": 4,
+      "maxRedirects": 3
+    },
+    {
+      "key": "weishi",
+      "displayName": "微视",
+      "aliases": null,
+      "hostRules": [
+        {
+          "host": "weishi.qq.com",
+          "includeSubdomains": true
+        }
+      ],
+      "capabilities": 1,
+      "priority": 5,
+      "queryKeys": [
+        "id"
+      ],
+      "supportsId": true,
+      "maxRequests": 4,
+      "maxRedirects": 3
+    },
+    {
+      "key": "huoshan",
+      "displayName": "火山",
+      "aliases": null,
+      "hostRules": [
+        {
+          "host": "share.huoshan.com",
+          "includeSubdomains": true
+        }
+      ],
+      "capabilities": 1,
+      "priority": 6,
+      "queryKeys": [
+        "item_id"
+      ],
+      "supportsId": true,
+      "maxRequests": 4,
+      "maxRedirects": 3
+    },
+    {
+      "key": "lishipin",
+      "displayName": "梨视频",
+      "aliases": null,
+      "hostRules": [
+        {
+          "host": "www.pearvideo.com",
+          "includeSubdomains": true
+        }
+      ],
+      "capabilities": 1,
+      "priority": 7,
+      "queryKeys": null,
+      "supportsId": true,
+      "maxRequests": 4,
+      "maxRedirects": 3
+    },
+    {
+      "key": "pipigaoxiao",
+      "displayName": "皮皮搞笑",
+      "aliases": null,
+      "hostRules": [
+        {
+          "host": "h5.pipigx.com",
+          "includeSubdomains": true
+        }
+      ],
+      "capabilities": 1,
+      "priority": 8,
+      "queryKeys": [
+        "pid"
+      ],
+      "supportsId": true,
+      "maxRequests": 4,
+      "maxRedirects": 3
+    },
+    {
+      "key": "quanmin",
+      "displayName": "度小视",
+      "aliases": null,
+      "hostRules": [
+        {
+          "host": "xspshare.baidu.com",
+          "includeSubdomains": true
+        },
+        {
+          "host": "quanmin.baidu.com",
+          "includeSubdomains": true
+        },
+        {
+          "host": "quanmin.hao222.com",
+          "includeSubdomains": true
+        }
+      ],
+      "capabilities": 1,
+      "priority": 9,
+      "queryKeys": [
+        "vid"
+      ],
+      "supportsId": true,
+      "maxRequests": 4,
+      "maxRedirects": 3
+    },
+    {
+      "key": "huya",
+      "displayName": "虎牙",
+      "aliases": null,
+      "hostRules": [
+        {
+          "host": "v.huya.com",
+          "includeSubdomains": true
+        },
+        {
+          "host": "www.huya.com",
+          "includeSubdomains": true
+        }
+      ],
+      "capabilities": 1,
+      "priority": 10,
+      "queryKeys": [
+        "vid"
+      ],
+      "supportsId": true,
+      "maxRequests": 4,
+      "maxRedirects": 3
+    },
+    {
+      "key": "acfun",
+      "displayName": "AcFun",
+      "aliases": null,
+      "hostRules": [
+        {
+          "host": "www.acfun.cn",
+          "includeSubdomains": true
+        }
+      ],
+      "capabilities": 1,
+      "priority": 11,
+      "queryKeys": [
+        "ac"
+      ],
+      "supportsId": true,
+      "maxRequests": 4,
+      "maxRedirects": 3
+    },
+    {
+      "key": "weibo",
+      "displayName": "微博",
+      "aliases": null,
+      "hostRules": [
+        {
+          "host": "weibo.com",
+          "includeSubdomains": true
+        }
+      ],
+      "capabilities": 3,
+      "priority": 12,
+      "queryKeys": [
+        "fid"
+      ],
+      "supportsId": true,
+      "maxRequests": 4,
+      "maxRedirects": 3
+    },
+    {
+      "key": "lvzhou",
+      "displayName": "绿洲",
+      "aliases": null,
+      "hostRules": [
+        {
+          "host": "weibo.cn",
+          "includeSubdomains": true
+        }
+      ],
+      "capabilities": 1,
+      "priority": 13,
+      "queryKeys": [
+        "id"
+      ],
+      "supportsId": true,
+      "maxRequests": 4,
+      "maxRedirects": 3
+    },
+    {
+      "key": "meipai",
+      "displayName": "美拍",
+      "aliases": null,
+      "hostRules": [
+        {
+          "host": "meipai.com",
+          "includeSubdomains": true
+        }
+      ],
+      "capabilities": 1,
+      "priority": 14,
+      "queryKeys": [
+        "id"
+      ],
+      "supportsId": true,
+      "maxRequests": 4,
+      "maxRedirects": 3
+    },
+    {
+      "key": "doupai",
+      "displayName": "逗拍",
+      "aliases": null,
+      "hostRules": [
+        {
+          "host": "doupai.cc",
+          "includeSubdomains": true
+        }
+      ],
+      "capabilities": 1,
+      "priority": 15,
+      "queryKeys": [
+        "id"
+      ],
+      "supportsId": true,
+      "maxRequests": 4,
+      "maxRedirects": 3
+    },
+    {
+      "key": "quanminkge",
+      "displayName": "全民K歌",
+      "aliases": [
+        "kgqq"
+      ],
+      "hostRules": [
+        {
+          "host": "kg.qq.com",
+          "includeSubdomains": true
+        }
+      ],
+      "capabilities": 1,
+      "priority": 16,
+      "queryKeys": [
+        "s"
+      ],
+      "supportsId": true,
+      "maxRequests": 4,
+      "maxRedirects": 3
+    },
+    {
+      "key": "sixroom",
+      "displayName": "六间房",
+      "aliases": null,
+      "hostRules": [
+        {
+          "host": "6.cn",
+          "includeSubdomains": true
+        }
+      ],
+      "capabilities": 1,
+      "priority": 17,
+      "queryKeys": [
+        "vid"
+      ],
+      "supportsId": true,
+      "maxRequests": 4,
+      "maxRedirects": 3
+    },
+    {
+      "key": "xinpianchang",
+      "displayName": "新片场",
+      "aliases": null,
+      "hostRules": [
+        {
+          "host": "xinpianchang.com",
+          "includeSubdomains": true
+        }
+      ],
+      "capabilities": 1,
+      "priority": 18,
+      "queryKeys": [
+        "id"
+      ],
+      "supportsId": false,
+      "maxRequests": 4,
+      "maxRedirects": 3
+    },
+    {
+      "key": "haokan",
+      "displayName": "好看视频",
+      "aliases": null,
+      "hostRules": [
+        {
+          "host": "haokan.baidu.com",
+          "includeSubdomains": true
+        },
+        {
+          "host": "haokan.hao123.com",
+          "includeSubdomains": true
+        }
+      ],
+      "capabilities": 1,
+      "priority": 19,
+      "queryKeys": [
+        "vid"
+      ],
+      "supportsId": true,
+      "maxRequests": 4,
+      "maxRedirects": 3
+    },
+    {
+      "key": "redbook",
+      "displayName": "小红书",
+      "aliases": [
+        "xiaohongshu"
+      ],
+      "hostRules": [
+        {
+          "host": "www.xiaohongshu.com",
+          "includeSubdomains": true
+        },
+        {
+          "host": "xhslink.com",
+          "includeSubdomains": true
+        }
+      ],
+      "capabilities": 11,
+      "priority": 20,
+      "queryKeys": [
+        "xsec_source",
+        "xsec_token"
+      ],
+      "supportsId": false,
+      "maxRequests": 4,
+      "maxRedirects": 3
+    },
+    {
+      "key": "bilibili",
+      "displayName": "哔哩哔哩",
+      "aliases": null,
+      "hostRules": [
+        {
+          "host": "bilibili.com",
+          "includeSubdomains": true
+        },
+        {
+          "host": "b23.tv",
+          "includeSubdomains": true
+        }
+      ],
+      "capabilities": 1,
+      "priority": 21,
+      "queryKeys": [
+        "bvid",
+        "p"
+      ],
+      "supportsId": false,
+      "maxRequests": 4,
+      "maxRedirects": 3
+    },
+    {
+      "key": "twitter",
+      "displayName": "X/Twitter",
+      "aliases": null,
+      "hostRules": [
+        {
+          "host": "x.com",
+          "includeSubdomains": true
+        },
+        {
+          "host": "twitter.com",
+          "includeSubdomains": true
+        },
+        {
+          "host": "t.co",
+          "includeSubdomains": true
+        }
+      ],
+      "capabilities": 3,
+      "priority": 22,
+      "queryKeys": [
+        "s",
+        "t"
+      ],
+      "supportsId": true,
+      "maxRequests": 4,
+      "maxRedirects": 3
+    },
+    {
+      "key": "qqvideo",
+      "displayName": "腾讯视频",
+      "aliases": null,
+      "hostRules": [
+        {
+          "host": "v.qq.com",
+          "includeSubdomains": true
+        }
+      ],
+      "capabilities": 1,
+      "priority": 23,
+      "queryKeys": [
+        "v",
+        "vid"
+      ],
+      "supportsId": true,
+      "maxRequests": 4,
+      "maxRedirects": 3
+    },
+    {
+      "key": "sohu",
+      "displayName": "搜狐视频",
+      "aliases": null,
+      "hostRules": [
+        {
+          "host": "tv.sohu.com",
+          "includeSubdomains": true
+        },
+        {
+          "host": "my.tv.sohu.com",
+          "includeSubdomains": true
+        }
+      ],
+      "capabilities": 1,
+      "priority": 24,
+      "queryKeys": [
+        "id",
+        "vid"
+      ],
+      "supportsId": true,
+      "maxRequests": 4,
+      "maxRedirects": 3
+    },
+    {
+      "key": "cctv",
+      "displayName": "央视网",
+      "aliases": null,
+      "hostRules": [
+        {
+          "host": "tv.cctv.cn",
+          "includeSubdomains": true
+        },
+        {
+          "host": "tv.cctv.com",
+          "includeSubdomains": true
+        }
+      ],
+      "capabilities": 1,
+      "priority": 25,
+      "queryKeys": [
+        "pid"
+      ],
+      "supportsId": true,
+      "maxRequests": 4,
+      "maxRedirects": 3
+    }
+  ]
+}

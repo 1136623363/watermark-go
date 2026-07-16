@@ -1,18 +1,16 @@
 package server
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
-	"os/exec"
 	"strings"
-	"time"
 
-	"github.com/1136623363/watermark-go/internal/parsers/native"
-	"github.com/1136623363/watermark-go/internal/runtimecfg"
+	"github.com/1136623363/watermark-go/internal/netguard"
+	parser "github.com/1136623363/watermark-go/internal/parser/native"
+	ytdlprunner "github.com/1136623363/watermark-go/internal/parser/ytdlp"
 )
 
 const ytDLPFormatSelector = "best[protocol=https][vcodec!=none][acodec!=none]/best[protocol=http][vcodec!=none][acodec!=none]/best[vcodec!=none][acodec!=none]/best"
@@ -54,13 +52,13 @@ type parseResult struct {
 	data         parseData
 }
 
-func tryParseWithYTDLP(rawURL string, parseErr error) (*parseResult, error) {
+func tryParseWithYTDLP(ctx context.Context, rawURL string, parseErr error) (*parseResult, error) {
 	if !shouldTryYTDLP(rawURL, parseErr) {
 		return nil, parseErr
 	}
 	logInfof("yt-dlp fallback started target=%s original_error=%s", targetForLog(rawURL), compactLogMessage(parseErr.Error()))
 
-	meta, err := runYTDLP(rawURL)
+	meta, err := runYTDLP(ctx, rawURL)
 	if err != nil {
 		logErrorf("yt-dlp fallback failed target=%s error=%v", targetForLog(rawURL), err)
 		return nil, err
@@ -89,13 +87,18 @@ func tryParseWithYTDLP(rawURL string, parseErr error) (*parseResult, error) {
 }
 
 func shouldTryYTDLP(rawURL string, parseErr error) bool {
-	lowerURL := strings.ToLower(strings.TrimSpace(rawURL))
-	if lowerURL == "" {
+	if parseErr == nil || isDirectM3U8URL(rawURL) {
 		return false
 	}
-	if isDirectM3U8URL(rawURL) {
+	target, err := netguard.NewFetchURL(strings.TrimSpace(rawURL))
+	if err != nil {
 		return false
 	}
+	parsed, err := url.Parse(target.Safe().String())
+	if err != nil || parsed == nil {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
 
 	for _, domain := range []string{
 		"youtube.com",
@@ -108,61 +111,26 @@ func shouldTryYTDLP(rawURL string, parseErr error) bool {
 		"dailymotion.com",
 		"dai.ly",
 	} {
-		if strings.Contains(lowerURL, domain) {
+		if host == domain || strings.HasSuffix(host, "."+domain) {
 			return true
 		}
 	}
-
-	if parseErr == nil {
-		return false
-	}
-
-	text := strings.ToLower(strings.TrimSpace(parseErr.Error()))
-	return strings.Contains(text, "not have source config") ||
-		strings.Contains(text, "has no video share url parser")
+	return false
 }
 
-func runYTDLP(rawURL string) (*ytDLPMetadata, error) {
-	bin, err := resolveYTDLPBinary()
+func runYTDLP(ctx context.Context, rawURL string) (*ytDLPMetadata, error) {
+	cfg := currentApplicationRunnerConfig().YTDLP
+	runner, err := ytdlprunner.New(ytdlprunner.Config{
+		Binary: cfg.Binary, Timeout: cfg.Timeout,
+		// Task 4 wires the verified proxy handshake and isolated executor.
+		// Until both exist, the constructor intentionally fails closed.
+	})
 	if err != nil {
 		return nil, err
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	timeout := runtimecfg.YTDLPTimeout()
-	if timeout > 0 {
-		cancel()
-		ctx, cancel = context.WithTimeout(context.Background(), timeout)
-	}
-	defer cancel()
-
-	args := []string{
-		"--dump-single-json",
-		"--no-warnings",
-		"--no-playlist",
-		"--skip-download",
-		"--socket-timeout", "20",
-		"--extractor-retries", "1",
-		"--fragment-retries", "1",
-		"-f", ytDLPFormatSelector,
-	}
-	if proxy := strings.TrimSpace(runtimecfg.ProxyURLStringForTarget(rawURL)); proxy != "" {
-		args = append(args, "--proxy", proxy)
-	}
-	args = append(args, rawURL)
-	cmd := exec.CommandContext(ctx, bin, args...)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	output, err := cmd.Output()
-	if ctx.Err() == context.DeadlineExceeded {
-		return nil, errors.New("yt-dlp timeout")
-	}
+	output, err := runner.Run(ctx, rawURL)
 	if err != nil {
-		text := strings.TrimSpace(stderr.String())
-		if text == "" {
-			text = err.Error()
-		}
-		return nil, fmt.Errorf("yt-dlp parse failed: %s", text)
+		return nil, err
 	}
 
 	var meta ytDLPMetadata
@@ -171,24 +139,6 @@ func runYTDLP(rawURL string) (*ytDLPMetadata, error) {
 	}
 
 	return &meta, nil
-}
-
-func resolveYTDLPBinary() (string, error) {
-	candidates := []string{
-		runtimecfg.YTDLPBinary(),
-		"yt-dlp",
-		"yt-dlp.exe",
-	}
-	for _, candidate := range candidates {
-		candidate = strings.TrimSpace(candidate)
-		if candidate == "" {
-			continue
-		}
-		if path, err := exec.LookPath(candidate); err == nil {
-			return path, nil
-		}
-	}
-	return "", errors.New("yt-dlp binary not found")
 }
 
 func buildParseDataFromYTDLP(rawURL string, meta *ytDLPMetadata) (parseData, string, error) {

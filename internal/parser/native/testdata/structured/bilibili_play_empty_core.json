@@ -1,0 +1,12 @@
+{
+  "synthetic": true,
+  "code": 0,
+  "message": "synthetic play snapshot without usable media",
+  "data": {
+    "durl": [],
+    "dash": {
+      "video": [],
+      "audio": []
+    }
+  }
+}

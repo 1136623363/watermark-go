@@ -18,6 +18,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
+
+	"github.com/1136623363/watermark-go/internal/netguard"
 )
 
 type cachedParseResult struct {
@@ -91,7 +93,7 @@ func handleParseCache(c *gin.Context) {
 func cacheParseData(sourceURL string, data parseData) parseData {
 	sourceURL = strings.TrimSpace(sourceURL)
 	data = normalizeParseDataMediaAliases(data)
-	data.SourceURL = sourceURL
+	data.SourceURL = safePersistentSourceURL(sourceURL)
 	cached, err := globalParseResultCache.put(sourceURL, data)
 	if err != nil {
 		logWarnf("parse cache write failed target=%s error=%v", targetForLog(sourceURL), err)
@@ -304,17 +306,18 @@ func (cache *parseResultCache) getRecord(id string) (cachedParseResult, bool, er
 }
 
 func (cache *parseResultCache) put(sourceURL string, data parseData) (parseData, error) {
-	sourceURL = strings.TrimSpace(sourceURL)
-	id := parseCacheID(sourceURL)
+	requestURL := strings.TrimSpace(sourceURL)
+	id := parseCacheID(requestURL)
 	if id == "" {
 		return data, nil
 	}
+	sourceURL = safePersistentSourceURL(requestURL)
 	data.ShareID = id
 	data.SourceURL = sourceURL
 	data = normalizeParseDataMediaAliases(data)
 
 	if cache.mysql != nil {
-		stored, err := cache.mysql.put(sourceURL, data)
+		stored, err := cache.mysql.put(requestURL, data)
 		if err != nil {
 			return data, err
 		}
@@ -463,6 +466,14 @@ func parseURLHash(sourceURL string) string {
 	}
 	sum := sha256.Sum256([]byte(sourceURL))
 	return hex.EncodeToString(sum[:])
+}
+
+func safePersistentSourceURL(raw string) string {
+	target, err := netguard.NewFetchURL(strings.TrimSpace(raw))
+	if err != nil {
+		return ""
+	}
+	return target.Safe().String()
 }
 
 func (cache *parseResultCache) putRedisBestEffort(data parseData) {

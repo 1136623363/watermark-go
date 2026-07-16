@@ -189,11 +189,13 @@ session cookie 把 `mysql/environment/breakglass` auth mode 纳入签名并禁�
 - 整个同步请求受 34 秒服务端预算约束，超出预算转异步任务或返回可重试错误；
 - 批量基准通过受控 worker pool 并发执行，固定并发 3 以匹配历史口径并保护 4 核服务器。
 
-parser registry 使用 metadata-driven `Descriptor`，每个平台集中声明稳定 ASCII key、显示名、aliases、精确
-domains、video/gallery/audio/live-photo/m3u8 capabilities、确定性 priority、允许保留的 query keys 和构造函数。启动时
-拒绝重复或歧义 key/alias/domain，路由使用规范 host 精确匹配且输出顺序确定。研究项目的 50 个 domain
+parser registry 使用 metadata-driven `Descriptor`，每个平台集中声明稳定 ASCII key、显示名、aliases、显式
+HostRule、video/gallery/audio/live-photo/m3u8 capabilities、确定性 priority、允许保留的 query keys 和构造函数。启动时
+拒绝重复或歧义 key/alias/domain，路由使用 exact 或 DNS label-boundary controlled-subdomain 匹配且输出顺序确定。研究项目的 50 个 domain
 alias 只是候选覆盖目录；未经固定旧来源、canonical 93 样本或新增独立 fixture 验证的条目不进入
 production registry，也不能改变基准 trust anchor。
+固定 commit 对现有 41 条 domain 全部使用 label-boundary subdomain 契约，Task 3 保持 41/41
+`IncludeSubdomains=true`；上游 exact netloc 只用于 Task 10 评估完整 exact alias 迁移，不能静默缩小兼容面。
 
 parser constructor 必须纯净且零 I/O，只接收注入的 netguard client、clock、短期 token provider、logger
 与 typed config；不得在 package init/import/构造时联网、读环境、创建目录或启动进程。优先结构化 API；
@@ -246,6 +248,12 @@ HTTP(S)/ALL/NO_PROXY 后只注入 guard。Compose policy、CI integration、runt
 任一无法证明 network/image/command/UDS identity 时 production fallback fail closed，不在 API 内降级
 执行。m3u8 的远程 manifest/子清单/分片全部由 Go 有界预取并重写到受控临时根，ffmpeg 只读本地 file，
 不启用任何联网/crypto/concat/data 协议。
+
+输入识别与出口授权是两套策略：`InputShare` 只按 Descriptor HostRule 路由；每个 native parser 的固定
+`MetadataAPI` authority 必须 exact 登记且有唯一 owner；`SessionBootstrap/SessionConsumer` 只允许 exact
+host 取得敏感材料；动态 `MediaCandidate` 只拥有无 Cookie/Auth/session/Origin/跨源 Referer 的公网权限。
+parser key、purpose 与 policy fingerprint 绑定到首次请求、redirect 和实际 dial；API authority 不能反向
+成为用户输入，跨 purpose redirect 一律 fail closed。
 
 上述 helper/proxy 边界对 recovery/candidate 两组分别成立，API 只能访问本组 UDS，proxy 只能服务本组
 sandbox。opaque music provider 配置只用于识别“已配置”和安全迁移；本轮没有 production helper consumer，

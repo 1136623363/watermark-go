@@ -14,7 +14,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/1136623363/watermark-go/internal/parsers/native"
 	"github.com/1136623363/watermark-go/internal/runtimecfg"
 )
 
@@ -108,17 +107,12 @@ func handleAdminSummary(c *gin.Context) {
 	testLinks := adminTestLinksFromSamples(testSamples)
 	latestPlatformTest, hasLatestPlatformTest := latestAdminPlatformTestRun(c.Request.Context())
 
-	platforms := make([]platformInfo, 0, len(parser.VideoSourceInfoMapping))
-	for source, info := range parser.VideoSourceInfoMapping {
-		name := source
-		if displayName, ok := platformNames[source]; ok {
-			name = displayName
-		}
+	sources := nativeParserSources()
+	platforms := make([]platformInfo, 0, len(sources))
+	for _, info := range sources {
 		platforms = append(platforms, platformInfo{
-			Source:   source,
-			Name:     name,
-			URLParse: info.VideoShareUrlParser != nil,
-			IDParse:  info.VideoIdParser != nil,
+			Source: info.Key, Name: info.DisplayName,
+			URLParse: info.URLParse, IDParse: info.IDParse,
 		})
 	}
 	sort.Slice(platforms, func(i, j int) bool {
@@ -132,7 +126,7 @@ func handleAdminSummary(c *gin.Context) {
 			"startedAt":       adminStartedAt,
 			"uptimeSeconds":   int64(time.Since(adminStartedAt).Seconds()),
 			"goVersion":       runtime.Version(),
-			"platformCount":   len(parser.VideoSourceInfoMapping),
+			"platformCount":   len(sources),
 			"testSampleCount": len(testSamples),
 			"testLinkCount":   len(testLinks),
 			"testLinks":       testLinks,

@@ -96,6 +96,9 @@ func TestMediaParserResearchMapsStrengthsAndExplicitlyRejectsUnsafePatterns(t *t
 		"不得硬编码会话或反爬材料",
 		"不得作为 93 样本基线权威",
 		"上游代码复制：无",
+		"输入目录与出口 authority 分离",
+		"TestEveryNativeFixedEndpointHasPolicyOwner",
+		"Actions-only immutable image",
 	} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("media-parser review is missing required decision: %q", required)
@@ -113,6 +116,8 @@ func TestMediaParserResearchIsIntegratedAcrossGoverningDocuments(t *testing.T) {
 			"50 个 domain alias 只作候选目录",
 			"SessionMaterialProvider",
 			"mediaParserIntegration",
+			"TestPurposeScopedOutboundAuthority",
+			"TestParserAPIAuthorityCannotBeUsedAsInputRoute",
 		},
 		"docs/superpowers/specs/2026-07-13-watermark-go-single-node-refactor-design.md": {
 			"033424b08ac6468c8c37b6fb0c98a0446bb09d9e",
@@ -120,6 +125,7 @@ func TestMediaParserResearchIsIntegratedAcrossGoverningDocuments(t *testing.T) {
 			"baselineAuthority=false",
 			"SessionMaterialProvider",
 			"mediaParserIntegration",
+			"MetadataAPI",
 		},
 		"docs/requirements-traceability.md": {
 			"## 外部解析研究融合",
@@ -127,6 +133,7 @@ func TestMediaParserResearchIsIntegratedAcrossGoverningDocuments(t *testing.T) {
 			"不盲信数组下标",
 			"SessionMaterialProvider",
 			"media-parser-integration.json",
+			"TestCrossPurposeRedirectFailsClosed",
 		},
 		"约束文件.md": {
 			"metadata-driven descriptor registry",
@@ -154,6 +161,7 @@ func TestMediaParserResearchBenefitsHaveExecutableOwnersAndEvidence(t *testing.T
 	plan := readPolicyDocument(t, root, "docs/superpowers/plans/2026-07-13-watermark-go-single-node-refactor.md")
 	tasks := map[string]string{
 		"3":  policyDocumentSection(t, plan, "## 任务 3：", "## 任务 4："),
+		"4":  policyDocumentSection(t, plan, "## 任务 4：", "## 任务 5："),
 		"5":  policyDocumentSection(t, plan, "## 任务 5：", "## 任务 6："),
 		"6":  policyDocumentSection(t, plan, "## 任务 6：", "## 任务 7："),
 		"7":  policyDocumentSection(t, plan, "## 任务 7：", "## 任务 8："),
@@ -178,6 +186,14 @@ func TestMediaParserResearchBenefitsHaveExecutableOwnersAndEvidence(t *testing.T
 			"TestScopedSessionMaterialInvalidatesOnlyOnTypedExpiry",
 			"vid", "id", "xsec_token", "modal_id", "v", "s", "pid",
 		},
+		"4": {
+			"internal/netguard/authority.go",
+			"TestPurposeScopedOutboundAuthority",
+			"TestEveryNativeFixedEndpointHasPolicyOwner",
+			"TestParserAPIAuthorityCannotBeUsedAsInputRoute",
+			"TestSensitiveHeadersNeverReachDynamicMediaCandidateHost",
+			"TestCrossPurposeRedirectFailsClosed",
+		},
 		"5": {
 			"TestCacheKeyBindsPlatformResourceParserAndSchemaVersion",
 			"TestCacheVersionChangeMisses",
@@ -195,12 +211,13 @@ func TestMediaParserResearchBenefitsHaveExecutableOwnersAndEvidence(t *testing.T
 		},
 		"9": {
 			"TestDASHCandidateOrderAndFallbackBudget",
-			"统一总预算", "0700", "0600", "symlink",
+			"统一总预算", "0700", "0600", "symlink", "未配对的 DASH",
 		},
 		"10": {
 			"tests/research/media-parser/manifest.json",
 			"productionEnabled=false",
 			"coverage clue not adopted",
+			"m.weibo.cn", "m.oasis.weibo.cn",
 		},
 		"12": {
 			"TestMediaParserIntegrationContract",

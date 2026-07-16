@@ -17,6 +17,8 @@ const (
 	EnvironmentDevelopment = "development"
 	EnvironmentTest        = "test"
 	EnvironmentProduction  = "production"
+	ParserEngineNative     = "native"
+	ParserEngineUniversal  = "universal"
 )
 
 type Config struct {
@@ -148,6 +150,12 @@ func (value SensitiveValue) GoString() string {
 	return "config.SensitiveValue(" + value.String() + ")"
 }
 
+// Format covers every fmt verb. String/GoString are insufficient for numeric
+// or invalid verbs, where fmt otherwise traverses the private value.
+func (value SensitiveValue) Format(state fmt.State, _ rune) {
+	_, _ = state.Write([]byte(value.String()))
+}
+
 func (value SensitiveValue) MarshalJSON() ([]byte, error) {
 	return nil, errors.New("sensitive value cannot be serialized")
 }
@@ -186,6 +194,12 @@ func (cfg Config) String() string {
 
 func (cfg Config) GoString() string {
 	return cfg.String()
+}
+
+// Format always emits the redacted summary and deliberately ignores verb,
+// flags, width and precision so nested credentials cannot be reflected.
+func (cfg Config) Format(state fmt.State, _ rune) {
+	_, _ = state.Write([]byte(cfg.String()))
 }
 
 func (cfg Config) MarshalJSON() ([]byte, error) {
@@ -297,10 +311,10 @@ func LoadWithOptions(getenv func(string) string, options LoadOptions) (Config, e
 func loadRunnerConfig(read getenvReader) (RunnerConfig, error) {
 	engine := strings.ToLower(read.trimmed("PARSER_ENGINE"))
 	if engine == "" {
-		engine = "native"
+		engine = ParserEngineNative
 	}
 	switch engine {
-	case "native", "universal":
+	case ParserEngineNative, ParserEngineUniversal:
 	default:
 		return RunnerConfig{}, errors.New("invalid PARSER_ENGINE")
 	}
@@ -421,6 +435,9 @@ func loadBoolean(read getenvReader, key string, fallback bool) (bool, error) {
 }
 
 func validateProduction(cfg Config) error {
+	if cfg.Runner.Engine != ParserEngineNative || cfg.Runner.FallbackEnabled {
+		return errors.New("guarded external parser runners are unavailable in production")
+	}
 	if err := validateMySQLDSN(cfg.MySQL.DSN); err != nil {
 		return err
 	}

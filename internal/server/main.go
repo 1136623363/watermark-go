@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"html/template"
 	"net"
 	"net/http"
@@ -16,7 +17,7 @@ import (
 
 	adminweb "github.com/1136623363/watermark-go/internal/admin/web"
 	"github.com/1136623363/watermark-go/internal/config"
-	"github.com/1136623363/watermark-go/internal/parsers/native"
+	parser "github.com/1136623363/watermark-go/internal/parser/native"
 	"github.com/1136623363/watermark-go/internal/runtimecfg"
 	"github.com/1136623363/watermark-go/internal/utils"
 )
@@ -94,35 +95,6 @@ type platformInfo struct {
 	IDParse  bool   `json:"id_parse"`
 }
 
-var platformNames = map[string]string{
-	"acfun":        "AcFun",
-	"bilibili":     "哔哩哔哩",
-	"cctv":         "央视网",
-	"doupai":       "逗拍",
-	"douyin":       "抖音",
-	"haokan":       "好看视频",
-	"huoshan":      "火山",
-	"huya":         "虎牙",
-	"kuaishou":     "快手",
-	"lishipin":     "梨视频",
-	"lvzhou":       "绿洲",
-	"meipai":       "美拍",
-	"pipigaoxiao":  "皮皮搞笑",
-	"pipixia":      "皮皮虾",
-	"qqvideo":      "腾讯视频",
-	"quanmin":      "度小视",
-	"quanminkge":   "全民K歌",
-	"redbook":      "小红书",
-	"sixroom":      "六间房",
-	"sohu":         "搜狐视频",
-	"twitter":      "X/Twitter",
-	"weibo":        "微博",
-	"weishi":       "微视",
-	"xigua":        "西瓜视频",
-	"xinpianchang": "新片场",
-	"zuiyou":       "最右",
-}
-
 var looseURLPattern = regexp.MustCompile(`https?://[^\s]+`)
 
 func startHTTPServer(ctx context.Context, cfg config.Config, ready func(*http.Server) error) error {
@@ -131,6 +103,14 @@ func startHTTPServer(ctx context.Context, cfg config.Config, ready func(*http.Se
 	}
 	setApplicationDownloadConfig(cfg.Download)
 	defer setApplicationDownloadConfig(config.DownloadConfig{})
+	setApplicationRunnerConfig(cfg.Runner)
+	defer setApplicationRunnerConfig(config.RunnerConfig{})
+	nativeParser, err := newApplicationNativeParser(cfg.Parser)
+	if err != nil {
+		return fmt.Errorf("configure native parser: %w", err)
+	}
+	setApplicationNativeParser(nativeParser)
+	defer setApplicationNativeParser(nil)
 	logResources, err := setupLogging()
 	if err != nil {
 		return err
@@ -171,10 +151,10 @@ func startHTTPServer(ctx context.Context, cfg config.Config, ready func(*http.Se
 		"runtime settings loaded proxy_configured=%t http_timeout=%s ytdlp_timeout=%s parser_engine=%s parser_fallback=%t ytdlp_binary=%s ffmpeg_binary=%s",
 		strings.TrimSpace(runtimecfg.ProxyURLString()) != "",
 		runtimecfg.HTTPTimeout(),
-		runtimecfg.YTDLPTimeout(),
-		runtimecfg.ParserEngine(),
-		runtimecfg.ParserFallbackEnabled(),
-		runtimecfg.YTDLPBinary(),
+		cfg.Runner.YTDLP.Timeout,
+		cfg.Runner.Engine,
+		cfg.Runner.FallbackEnabled,
+		cfg.Runner.YTDLP.Binary,
 		runtimecfg.FFMPEGBinary(),
 	)
 
@@ -273,7 +253,12 @@ func startHTTPServer(ctx context.Context, cfg config.Config, ready func(*http.Se
 	})
 
 	r.GET("/video/id/parse", func(c *gin.Context) {
-		parseRes, err := parser.ParseVideoId(c.Query("source"), c.Query("video_id"))
+		nativeParser, err := currentNativeParser()
+		if err != nil {
+			c.JSON(http.StatusOK, httpResponse{Code: 201, Msg: err.Error()})
+			return
+		}
+		parseRes, err := nativeParser.ParseVideoID(c.Request.Context(), c.Query("source"), c.Query("video_id"))
 		if err != nil {
 			c.JSON(http.StatusOK, httpResponse{Code: 201, Msg: err.Error()})
 			return
@@ -416,22 +401,19 @@ func apiV1HealthHandler(c *gin.Context) {
 	sendV1Success(c, gin.H{
 		"status":    "ok",
 		"version":   "watermark-backend",
-		"platforms": len(parser.VideoSourceInfoMapping),
+		"platforms": len(nativeParserSources()),
 	})
 }
 
 func apiV1PlatformsHandler(c *gin.Context) {
-	platforms := make([]platformInfo, 0, len(parser.VideoSourceInfoMapping))
-	for source, info := range parser.VideoSourceInfoMapping {
-		name := source
-		if displayName, ok := platformNames[source]; ok {
-			name = displayName
-		}
+	sources := nativeParserSources()
+	platforms := make([]platformInfo, 0, len(sources))
+	for _, info := range sources {
 		platforms = append(platforms, platformInfo{
-			Source:   source,
-			Name:     name,
-			URLParse: info.VideoShareUrlParser != nil,
-			IDParse:  info.VideoIdParser != nil,
+			Source:   info.Key,
+			Name:     info.DisplayName,
+			URLParse: info.URLParse,
+			IDParse:  info.IDParse,
 		})
 	}
 	sort.Slice(platforms, func(i, j int) bool {
@@ -468,7 +450,13 @@ func apiV1ParseURLHandler(c *gin.Context) {
 		return
 	}
 
-	info, err := parser.ParseVideoShareUrlByRegexp(rawURL)
+	nativeParser, err := currentNativeParser()
+	if err != nil {
+		attemptErr = err
+		sendV1Error(c, http.StatusServiceUnavailable, v1ErrParseFailed, err.Error())
+		return
+	}
+	info, err := nativeParser.ParseVideoShareURLByRegexp(c.Request.Context(), rawURL)
 	if err != nil {
 		attemptErr = err
 		sendV1Error(c, http.StatusUnprocessableEntity, v1ErrParseFailed, err.Error())
@@ -478,7 +466,7 @@ func apiV1ParseURLHandler(c *gin.Context) {
 	attemptResult = &parseResult{
 		source:       source,
 		sourceURL:    extractedURL,
-		parserEngine: runtimecfg.ParserEngineNative,
+		parserEngine: config.ParserEngineNative,
 		info:         info,
 		data:         toParseData(source, info),
 	}
@@ -489,17 +477,22 @@ func apiV1ParseIDHandler(c *gin.Context) {
 	source := c.Param("source")
 	videoID := c.Param("video_id")
 
-	info, exists := parser.VideoSourceInfoMapping[source]
+	info, exists := nativeParserSource(source)
 	if !exists {
 		sendV1Error(c, http.StatusBadRequest, v1ErrUnsupportedSource, "鏈煡鐨勫钩鍙?"+source)
 		return
 	}
-	if info.VideoIdParser == nil {
+	if !info.IDParse {
 		sendV1Error(c, http.StatusBadRequest, v1ErrIDParseNotSupported, "this platform does not support video ID parsing")
 		return
 	}
 
-	parseInfo, err := parser.ParseVideoId(source, videoID)
+	nativeParser, err := currentNativeParser()
+	if err != nil {
+		sendV1Error(c, http.StatusServiceUnavailable, v1ErrParseFailed, err.Error())
+		return
+	}
+	parseInfo, err := nativeParser.ParseVideoID(c.Request.Context(), source, videoID)
 	if err != nil {
 		sendV1Error(c, http.StatusUnprocessableEntity, v1ErrParseFailed, err.Error())
 		return
@@ -508,20 +501,8 @@ func apiV1ParseIDHandler(c *gin.Context) {
 }
 
 func matchPlatform(rawURL string) bool {
-	parsed, err := neturl.Parse(rawURL)
-	if err != nil {
-		return false
-	}
-	host := strings.ToLower(parsed.Hostname())
-	for _, sourceInfo := range parser.VideoSourceInfoMapping {
-		for _, domain := range sourceInfo.VideoShareUrlDomain {
-			domain = strings.ToLower(domain)
-			if host == domain || strings.HasSuffix(host, "."+domain) {
-				return true
-			}
-		}
-	}
-	return false
+	_, err := nativeParserSourceForURL(rawURL)
+	return err == nil
 }
 
 func compatErrorResponse(err error) httpResponse {
@@ -565,10 +546,14 @@ type parseRequestOptions struct {
 }
 
 func parseShareRequest(input string) (*parseResult, error) {
-	return parseShareRequestWithOptions(input, parseRequestOptions{})
+	return parseShareRequestWithOptionsContext(context.Background(), input, parseRequestOptions{})
 }
 
 func parseShareRequestWithOptions(input string, options parseRequestOptions) (*parseResult, error) {
+	return parseShareRequestWithOptionsContext(context.Background(), input, options)
+}
+
+func parseShareRequestWithOptionsContext(ctx context.Context, input string, options parseRequestOptions) (*parseResult, error) {
 	input = strings.TrimSpace(input)
 	if input == "" {
 		return nil, errors.New("url is empty")
@@ -625,7 +610,7 @@ func parseShareRequestWithOptions(input string, options parseRequestOptions) (*p
 		return result, nil
 	}
 
-	result, err := parseWithConfiguredEngine(input, normalized)
+	result, err := parseWithConfiguredEngine(ctx, input, normalized)
 	if err != nil {
 		setParseFailure(normalized, err)
 		return nil, err
@@ -637,26 +622,27 @@ func parseShareRequestWithOptions(input string, options parseRequestOptions) (*p
 	return result, nil
 }
 
-func parseWithConfiguredEngine(input, normalized string) (*parseResult, error) {
-	if runtimecfg.ParserEngine() == runtimecfg.ParserEngineUniversal {
-		result, err := tryParseWithUniversalParser(normalized)
+func parseWithConfiguredEngine(ctx context.Context, input, normalized string) (*parseResult, error) {
+	runnerConfig := currentApplicationRunnerConfig()
+	if runnerConfig.Engine == config.ParserEngineUniversal {
+		result, err := tryParseWithUniversalParser(ctx, normalized)
 		if err == nil {
 			return result, nil
 		}
-		if runtimecfg.ParserFallbackEnabled() {
+		if runnerConfig.FallbackEnabled {
 			logWarnf("universal parser failed, trying native parser target=%s error=%v", targetForLog(normalized), err)
-			return parseWithNativeParser(input, normalized)
+			return parseWithNativeParser(ctx, input, normalized)
 		}
 		return nil, err
 	}
 
-	result, err := parseWithNativeParser(input, normalized)
+	result, err := parseWithNativeParser(ctx, input, normalized)
 	if err == nil {
 		return result, nil
 	}
-	if runtimecfg.ParserFallbackEnabled() {
+	if runnerConfig.FallbackEnabled {
 		logWarnf("native parser failed, trying universal parser target=%s error=%v", targetForLog(normalized), err)
-		fallback, fallbackErr := tryParseWithUniversalParser(normalized)
+		fallback, fallbackErr := tryParseWithUniversalParser(ctx, normalized)
 		if fallbackErr == nil {
 			return fallback, nil
 		}
@@ -665,11 +651,18 @@ func parseWithConfiguredEngine(input, normalized string) (*parseResult, error) {
 	return nil, err
 }
 
-func parseWithNativeParser(input, normalized string) (*parseResult, error) {
+func parseWithNativeParser(ctx context.Context, input, normalized string) (*parseResult, error) {
 	source := detectSource(normalized)
-	info, err := parser.ParseVideoShareUrlByRegexp(input)
+	nativeParser, err := currentNativeParser()
 	if err != nil {
-		fallback, fallbackErr := tryParseWithYTDLP(normalized, err)
+		return nil, err
+	}
+	info, err := nativeParser.ParseVideoShareURLByRegexp(ctx, input)
+	if err != nil {
+		if !currentApplicationRunnerConfig().FallbackEnabled {
+			return nil, err
+		}
+		fallback, fallbackErr := tryParseWithYTDLP(ctx, normalized, err)
 		if fallbackErr == nil {
 			fallback.sourceURL = normalized
 			return fallback, nil
@@ -684,7 +677,7 @@ func parseWithNativeParser(input, normalized string) (*parseResult, error) {
 	result := &parseResult{
 		source:       source,
 		sourceURL:    normalized,
-		parserEngine: runtimecfg.ParserEngineNative,
+		parserEngine: config.ParserEngineNative,
 		info:         info,
 		data:         toParseData(source, info),
 	}
@@ -890,34 +883,28 @@ func detectSource(input string) string {
 		return ""
 	}
 
-	if parsed, err := neturl.Parse(input); err == nil {
-		host := strings.ToLower(parsed.Hostname())
-		if host != "" {
-			for source, info := range parser.VideoSourceInfoMapping {
-				for _, domain := range info.VideoShareUrlDomain {
-					if hostMatchesSourceDomain(host, domain) {
-						return source
-					}
-				}
-			}
-		}
+	if source, err := nativeParserSourceForURL(input); err == nil {
+		return source
 	}
-
-	lowerInput := strings.ToLower(input)
+	parsed, err := neturl.Parse(input)
+	if err != nil || parsed == nil || parsed.Hostname() == "" {
+		return ""
+	}
+	host := strings.ToLower(parsed.Hostname())
 	switch {
-	case strings.Contains(lowerInput, ".m3u8"):
+	case strings.Contains(strings.ToLower(parsed.EscapedPath()), ".m3u8"):
 		return "m3u8"
-	case strings.Contains(lowerInput, "youtube.com"), strings.Contains(lowerInput, "youtu.be"):
+	case hostMatchesSourceDomain(host, "youtube.com"), host == "youtu.be":
 		return "youtube"
-	case strings.Contains(lowerInput, "tiktok.com"):
+	case hostMatchesSourceDomain(host, "tiktok.com"):
 		return "tiktok"
-	case strings.Contains(lowerInput, "instagram.com"):
+	case hostMatchesSourceDomain(host, "instagram.com"):
 		return "instagram"
-	case strings.Contains(lowerInput, "facebook.com"), strings.Contains(lowerInput, "fb.watch"):
+	case hostMatchesSourceDomain(host, "facebook.com"), host == "fb.watch":
 		return "facebook"
-	case strings.Contains(lowerInput, "vimeo.com"):
+	case hostMatchesSourceDomain(host, "vimeo.com"):
 		return "vimeo"
-	case strings.Contains(lowerInput, "dailymotion.com"), strings.Contains(lowerInput, "dai.ly"):
+	case hostMatchesSourceDomain(host, "dailymotion.com"), host == "dai.ly":
 		return "dailymotion"
 	default:
 		return ""

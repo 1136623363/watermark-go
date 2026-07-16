@@ -1,6 +1,9 @@
 package server
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestClassifyParseInputKnownPlatform(t *testing.T) {
 	item := classifyParseInput("看看这个 https://v.douyin.com/i2YArd1J/")
@@ -22,6 +25,9 @@ func TestClassifyParseInputExternalPlatform(t *testing.T) {
 	}
 	if item.Platform != "instagram" {
 		t.Fatalf("platform = %q, want instagram", item.Platform)
+	}
+	if strings.Contains(item.RawInput, "igsh") || strings.Contains(item.SourceURL, "igsh") || strings.Contains(item.NormalizedURL, "igsh") {
+		t.Fatal("parse-attempt classification retained input query material")
 	}
 }
 

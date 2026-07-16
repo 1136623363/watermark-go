@@ -1,6 +1,11 @@
 package server
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
 
 func TestParseResultCachePutAndGet(t *testing.T) {
 	cache := &parseResultCache{dir: t.TempDir()}
@@ -61,6 +66,30 @@ func TestParseResultCacheGetBySourceURL(t *testing.T) {
 	}
 	if got.ShareID != stored.ShareID {
 		t.Fatalf("got ShareID = %q, want %q", got.ShareID, stored.ShareID)
+	}
+}
+
+func TestParseResultCacheDoesNotPersistInputQueryMaterial(t *testing.T) {
+	directory := t.TempDir()
+	cache := &parseResultCache{dir: directory}
+	sentinel := "session-query-sentinel"
+	sourceURL := "https://www.xiaohongshu.com/explore/synthetic?xsec_token=" + sentinel
+	stored, err := cache.put(sourceURL, parseData{Platform: "redbook", Type: "image"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(stored.SourceURL, sentinel) || strings.Contains(stored.SourceURL, "xsec_token") {
+		t.Fatal("cache response retained input query material")
+	}
+	content, err := os.ReadFile(filepath.Join(directory, stored.ShareID+".json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(content), sentinel) {
+		t.Fatal("cache persistence retained input query material")
+	}
+	if _, ok, err := cache.getBySourceURL(sourceURL); err != nil || !ok {
+		t.Fatalf("hashed lookup failed: ok=%t error=%v", ok, err)
 	}
 }
 

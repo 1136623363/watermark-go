@@ -89,6 +89,23 @@ func TestLoadProductionRejectsMalformedMySQLDSNWithoutExposingIt(t *testing.T) {
 	}
 }
 
+func TestLoadProductionRejectsUnavailableExternalParserModes(t *testing.T) {
+	t.Parallel()
+	for _, override := range []map[string]string{
+		{"PARSER_ENGINE": ParserEngineUniversal},
+		{"PARSER_FALLBACK_ENABLED": "true"},
+	} {
+		environment := validProductionEnvironment()
+		for key, value := range override {
+			environment[key] = value
+		}
+		_, err := LoadWith(environmentReader(environment))
+		if err == nil || err.Error() != "guarded external parser runners are unavailable in production" {
+			t.Fatalf("production accepted an unavailable external parser mode: %v", err)
+		}
+	}
+}
+
 func TestLoadMigratesLegacyDownloadSecretWithoutDualRuntimeReads(t *testing.T) {
 	legacyValue := strongTestValue("legacy")
 	canonicalValue := strongTestValue("canonical")
@@ -170,7 +187,19 @@ func TestConfigFormattingAndSummaryNeverExposeConfiguredValues(t *testing.T) {
 		t.Fatalf("LoadWith() error = %v", err)
 	}
 
-	formatted := fmt.Sprintf("%v|%+v|%#v", cfg, cfg, cfg)
+	formats := []string{
+		"%v", "%+v", "%#v", "%s", "%q", "%x", "%X", "%d", "%o", "%f", "%e", "%c", "%U", "%p", "%T", "%z",
+		"% 120.80v", "%#+120.80q",
+	}
+	formattedParts := make([]string, 0, len(formats)*2)
+	for _, format := range formats {
+		if format == "%p" {
+			formattedParts = append(formattedParts, fmt.Sprintf(format, &cfg))
+			continue
+		}
+		formattedParts = append(formattedParts, fmt.Sprintf(format, cfg), fmt.Sprintf(format, &cfg))
+	}
+	formatted := strings.Join(formattedParts, "|")
 	for _, key := range []string{
 		"MYSQL_DSN", "ADMIN_PASSWORD", "ADMIN_SESSION_SECRET", "DOWNLOAD_TOKEN_SECRET",
 		"WECHAT_MINI_APP_ID", "WECHAT_MINI_APP_SECRET", "APP_CLIENT_SIGNATURE_KEY",
@@ -338,7 +367,29 @@ func TestLoadKeepsMusicAndSohuCredentialsOpaque(t *testing.T) {
 	if !cfg.Runner.Universal.MusicConfig.Configured() || !cfg.Parser.SohuAPIToken.Configured() {
 		t.Fatal("opaque runner/parser credentials were not marked configured")
 	}
-	formatted := fmt.Sprintf("%v|%+v|%#v|%v|%+v|%#v|%+v|%#v", cfg.Runner.Universal.MusicConfig, cfg.Runner.Universal.MusicConfig, cfg.Runner.Universal.MusicConfig, cfg.Parser.SohuAPIToken, cfg.Parser.SohuAPIToken, cfg.Parser.SohuAPIToken, cfg, cfg)
+	formats := []string{
+		"%v", "%+v", "%#v", "%s", "%q", "%x", "%X", "%d", "%o", "%f", "%e", "%c", "%U", "%p", "%T", "%z",
+		"% 120.80v", "%#+120.80q",
+	}
+	formattedParts := make([]string, 0, len(formats)*6)
+	for _, format := range formats {
+		if format == "%p" {
+			formattedParts = append(formattedParts,
+				fmt.Sprintf(format, &cfg.Runner.Universal.MusicConfig),
+				fmt.Sprintf(format, &cfg.Parser.SohuAPIToken),
+				fmt.Sprintf(format, &cfg),
+			)
+			continue
+		}
+		formattedParts = append(formattedParts,
+			fmt.Sprintf(format, cfg.Runner.Universal.MusicConfig),
+			fmt.Sprintf(format, &cfg.Runner.Universal.MusicConfig),
+			fmt.Sprintf(format, cfg.Parser.SohuAPIToken),
+			fmt.Sprintf(format, &cfg.Parser.SohuAPIToken),
+			fmt.Sprintf(format, cfg), fmt.Sprintf(format, &cfg),
+		)
+	}
+	formatted := strings.Join(formattedParts, "|")
 	if strings.Contains(formatted, musicConfig) || strings.Contains(formatted, sohuMaterial) || strings.Contains(formatted, "opaque-") {
 		t.Fatalf("opaque config formatting exposed a credential: %s", formatted)
 	}

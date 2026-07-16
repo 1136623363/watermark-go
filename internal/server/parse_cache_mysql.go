@@ -55,10 +55,11 @@ func (store *mysqlParseResultStore) put(sourceURL string, data parseData) (parse
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	sourceURL = strings.TrimSpace(sourceURL)
-	normalized := normalizeURLForHash(sourceURL)
-	shareID := parseCacheID(sourceURL)
-	urlHash := parseURLHash(sourceURL)
+	requestURL := strings.TrimSpace(sourceURL)
+	shareID := parseCacheID(requestURL)
+	urlHash := parseURLHash(requestURL)
+	sourceURL = safePersistentSourceURL(requestURL)
+	normalized := sourceURL
 	data.ShareID = shareID
 	data.SourceURL = sourceURL
 	data = normalizeParseDataMediaAliases(data)

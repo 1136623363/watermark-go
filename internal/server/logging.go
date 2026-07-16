@@ -4,12 +4,13 @@ import (
 	"fmt"
 	"io"
 	"log"
-	neturl "net/url"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/gin-gonic/gin"
+
+	"github.com/1136623363/watermark-go/internal/netguard"
 )
 
 const defaultLogDir = "logs"
@@ -88,20 +89,25 @@ func logErrorf(format string, args ...interface{}) {
 func targetForLog(rawURL string) string {
 	rawURL = strings.TrimSpace(rawURL)
 	if rawURL == "" {
-		return ""
+		return "[empty-target]"
 	}
-	parsed, err := neturl.Parse(rawURL)
+	target, err := netguard.NewFetchURL(rawURL)
 	if err != nil {
-		return rawURL
+		return "[invalid-target]"
 	}
-	host := strings.TrimSpace(parsed.Host)
-	if host == "" {
-		return rawURL
+	safe := target.Safe().String()
+	separator := strings.Index(safe, "://")
+	if separator < 1 {
+		return "[invalid-target]"
 	}
-	if strings.TrimSpace(parsed.Scheme) == "" {
-		return host
+	authority := safe[separator+3:]
+	if slash := strings.IndexByte(authority, '/'); slash >= 0 {
+		authority = authority[:slash]
 	}
-	return parsed.Scheme + "://" + host
+	if authority == "" {
+		return "[invalid-target]"
+	}
+	return safe[:separator] + "://" + authority
 }
 
 func compactLogMessage(message string) string {

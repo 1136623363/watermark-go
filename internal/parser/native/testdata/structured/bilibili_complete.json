@@ -1,0 +1,10 @@
+{
+  "synthetic": true,
+  "code": 0,
+  "data": {
+    "bvid": "BV1SYNTHETIC",
+    "title": "synthetic fixture",
+    "pages": [{"cid": 10001}],
+    "owner": {"mid": 42, "name": "fixture-author", "face": "https://cdn.example/avatar.jpg"}
+  }
+}

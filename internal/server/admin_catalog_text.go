@@ -1,35 +1,6 @@
 package server
 
 func init() {
-	platformNames = map[string]string{
-		"acfun":        "AcFun",
-		"bilibili":     "哔哩哔哩",
-		"cctv":         "央视网",
-		"doupai":       "逗拍",
-		"douyin":       "抖音",
-		"haokan":       "好看视频",
-		"huoshan":      "火山",
-		"huya":         "虎牙",
-		"kuaishou":     "快手",
-		"lishipin":     "梨视频",
-		"lvzhou":       "绿洲",
-		"meipai":       "美拍",
-		"pipigaoxiao":  "皮皮搞笑",
-		"pipixia":      "皮皮虾",
-		"qqvideo":      "腾讯视频",
-		"quanmin":      "度小视",
-		"quanminkge":   "全民K歌",
-		"redbook":      "小红书",
-		"sixroom":      "六间房",
-		"sohu":         "搜狐视频",
-		"twitter":      "X/Twitter",
-		"weibo":        "微博",
-		"weishi":       "微视",
-		"xigua":        "西瓜视频",
-		"xinpianchang": "新片场",
-		"zuiyou":       "最右",
-	}
-
 	externalAdminTestSampleNames = map[string]string{
 		"abc":         "ABC",
 		"arte":        "ArteTV",

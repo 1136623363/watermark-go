@@ -216,6 +216,10 @@ func isPublicDomainHost(host string) bool {
 }
 
 func upsertWechatDownloadDomains(ctx context.Context, db *sql.DB, sourceURL string, data parseData, candidates []wechatDomainCandidate) error {
+	// Treat persistence as the trust boundary. Callers may legitimately need
+	// the original URL for hashing/routing, but evidence rows must never retain
+	// query, fragment or userinfo credential material.
+	sourceURL = safePersistentSourceURL(sourceURL)
 	sort.Slice(candidates, func(i, j int) bool {
 		if candidates[i].Origin != candidates[j].Origin {
 			return candidates[i].Origin < candidates[j].Origin

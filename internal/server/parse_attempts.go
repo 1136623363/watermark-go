@@ -11,8 +11,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-
-	"github.com/1136623363/watermark-go/internal/parsers/native"
 )
 
 const (
@@ -30,6 +28,7 @@ type parseLinkClassification struct {
 	Host           string
 	Platform       string
 	Classification string
+	hashInput      string
 }
 
 type parseAttemptStatsPayload struct {
@@ -75,7 +74,7 @@ type parseAttemptRecentItem struct {
 
 func parseShareRequestTracked(c *gin.Context, input string, entrypoint string, options parseRequestOptions) (*parseResult, int64, error) {
 	started := time.Now()
-	result, err := parseShareRequestWithOptions(input, options)
+	result, err := parseShareRequestWithOptionsContext(c.Request.Context(), input, options)
 	duration := time.Since(started)
 	recordParseAttempt(c, input, entrypoint, duration, result, err)
 	return result, duration.Milliseconds(), err
@@ -84,7 +83,6 @@ func parseShareRequestTracked(c *gin.Context, input string, entrypoint string, o
 func classifyParseInput(rawInput string) parseLinkClassification {
 	rawInput = strings.TrimSpace(rawInput)
 	classified := parseLinkClassification{
-		RawInput:       rawInput,
 		Classification: parseLinkClassInvalid,
 	}
 	if rawInput == "" {
@@ -92,22 +90,25 @@ func classifyParseInput(rawInput string) parseLinkClassification {
 	}
 
 	sourceURL := strings.TrimSpace(extractURL(rawInput))
-	classified.SourceURL = sourceURL
+	classified.hashInput = sourceURL
 	parsed, err := neturl.Parse(sourceURL)
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || strings.TrimSpace(parsed.Hostname()) == "" {
 		return classified
 	}
 
 	host := strings.ToLower(strings.TrimSpace(parsed.Hostname()))
-	normalizedURL := normalizeURLForHash(sourceURL)
-	platform := detectSource(normalizedURL)
+	normalizedForDetection := normalizeURLForHash(sourceURL)
+	platform := detectSource(normalizedForDetection)
+	safeURL := safePersistentSourceURL(sourceURL)
 
+	classified.RawInput = safeURL
+	classified.SourceURL = safeURL
 	classified.Host = host
-	classified.NormalizedURL = normalizedURL
+	classified.NormalizedURL = safeURL
 	classified.Platform = platform
 	classified.Classification = parseLinkClassUnknown
 	switch {
-	case isDirectM3U8URL(normalizedURL) || platform == "m3u8":
+	case isDirectM3U8URL(normalizedForDetection) || platform == "m3u8":
 		classified.Classification = parseLinkClassM3U8
 		classified.Platform = "m3u8"
 	case isNativeParserSource(platform):
@@ -123,7 +124,7 @@ func isNativeParserSource(source string) bool {
 	if source == "" {
 		return false
 	}
-	_, ok := parser.VideoSourceInfoMapping[source]
+	_, ok := nativeParserSource(source)
 	return ok
 }
 
@@ -134,12 +135,15 @@ func recordParseAttempt(c *gin.Context, rawInput string, entrypoint string, dura
 	}
 
 	classified := classifyParseInput(rawInput)
+	hashInput := classified.hashInput
 	sourceURL := firstNonEmpty(classified.SourceURL)
 	normalizedURL := classified.NormalizedURL
 	platform := classified.Platform
 	if result != nil {
+		hashInput = firstNonEmpty(result.sourceURL, hashInput)
 		sourceURL = firstNonEmpty(result.sourceURL, result.data.SourceURL, sourceURL)
-		normalizedURL = firstNonEmpty(normalizeURLForHash(sourceURL), normalizedURL)
+		sourceURL = safePersistentSourceURL(sourceURL)
+		normalizedURL = firstNonEmpty(sourceURL, normalizedURL)
 		platform = firstNonEmpty(result.source, result.data.Platform, platform)
 		if classified.Classification == parseLinkClassUnknown && strings.TrimSpace(result.source) != "" {
 			if result.source == "m3u8" {
@@ -158,7 +162,7 @@ func recordParseAttempt(c *gin.Context, rawInput string, entrypoint string, dura
 
 	success := parseErr == nil
 	errorCode, errorMessage := parseAttemptError(parseErr)
-	urlHash := parseURLHash(firstNonEmpty(normalizedURL, sourceURL, rawInput))
+	urlHash := parseURLHash(firstNonEmpty(hashInput, normalizedURL, sourceURL))
 	parserName := parseAttemptParserName(classified.Classification, result)
 
 	clientIP := ""

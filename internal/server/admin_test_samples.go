@@ -12,8 +12,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-
-	"github.com/1136623363/watermark-go/internal/parsers/native"
 )
 
 const adminTestSamplesFilePath = "cache/platform-test-samples.json"
@@ -308,18 +306,19 @@ func defaultAdminTestSamples() []adminTestSample {
 		known[platform] = link
 	}
 
-	items := make([]adminTestSample, 0, len(parser.VideoSourceInfoMapping)+len(externalAdminTestSampleNames))
-	sources := make([]string, 0, len(parser.VideoSourceInfoMapping))
-	for source := range parser.VideoSourceInfoMapping {
-		sources = append(sources, source)
+	nativeSources := nativeParserSources()
+	items := make([]adminTestSample, 0, len(nativeSources)+len(externalAdminTestSampleNames))
+	sources := make([]string, 0, len(nativeSources))
+	for _, source := range nativeSources {
+		sources = append(sources, source.Key)
 	}
 	sort.Strings(sources)
 
 	sortOrder := 0
 	for _, source := range sources {
 		name := source
-		if displayName, ok := platformNames[source]; ok {
-			name = displayName
+		if metadata, ok := nativeParserSource(source); ok {
+			name = metadata.DisplayName
 		}
 		link := known[source]
 		enabled := strings.TrimSpace(link.URL) != ""
@@ -504,9 +503,9 @@ func platformForDisplayName(name string) string {
 	if key == "" {
 		return ""
 	}
-	for platform, displayName := range platformNames {
-		if normalizeAdminSampleKey(displayName) == key {
-			return platform
+	for _, source := range nativeParserSources() {
+		if normalizeAdminSampleKey(source.DisplayName) == key {
+			return source.Key
 		}
 	}
 	for platform, displayName := range externalAdminTestSampleNames {
@@ -524,8 +523,8 @@ func platformForDisplayName(name string) string {
 
 func sampleDisplayName(platform string) string {
 	platform = normalizeAdminSamplePlatform(platform)
-	if name, ok := platformNames[platform]; ok {
-		return name
+	if source, ok := nativeParserSource(platform); ok {
+		return source.DisplayName
 	}
 	if name, ok := externalAdminTestSampleNames[platform]; ok {
 		return name
@@ -535,13 +534,10 @@ func sampleDisplayName(platform string) string {
 
 func normalizeAdminSamplePlatform(value string) string {
 	value = strings.ToLower(strings.TrimSpace(value))
+	if source, ok := nativeParserSource(value); ok {
+		return source.Key
+	}
 	switch value {
-	case "xiaohongshu":
-		return "redbook"
-	case "kgqq":
-		return "quanminkge"
-	case "ixigua":
-		return "xigua"
 	case "x", "twitterx", "xtwitter":
 		return "twitter"
 	default:

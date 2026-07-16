@@ -1,0 +1,11 @@
+{
+  "synthetic": true,
+  "code": 0,
+  "result": {
+    "data": {
+      "bvid": "BV1MOVED",
+      "title": "moved fixture",
+      "pages": [{"cid": 10003}]
+    }
+  }
+}

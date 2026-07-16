@@ -2,44 +2,38 @@ package server
 
 import (
 	"context"
+	"errors"
 	"net/url"
 	"strings"
 
-	universalparser "github.com/1136623363/watermark-go/internal/parsers/universal"
-	"github.com/1136623363/watermark-go/internal/runtimecfg"
+	"github.com/1136623363/watermark-go/internal/config"
+	coreparser "github.com/1136623363/watermark-go/internal/parser"
+	universalparser "github.com/1136623363/watermark-go/internal/parser/universal"
 )
 
-func tryParseWithUniversalParser(rawURL string) (*parseResult, error) {
-	cfg := runtimecfg.UniversalParser()
-	bridge := universalparser.NewPythonBridge(universalparser.Config{
-		PythonBin:         cfg.PythonBin,
-		BridgeScript:      cfg.BridgeScript,
-		VideoDLPath:       cfg.VideoDLPath,
-		MusicDLPath:       cfg.MusicDLPath,
-		WorkDir:           cfg.WorkDir,
-		BridgeTimeout:     cfg.TimeoutSeconds,
-		MusicDLTimeout:    cfg.MusicDLTimeoutSeconds,
-		MusicDLItemLimit:  cfg.MusicDLItemLimit,
-		MusicDLConfigJSON: cfg.MusicDLConfigJSON,
+func tryParseWithUniversalParser(ctx context.Context, rawURL string) (*parseResult, error) {
+	if looksLikeMusicURL(rawURL) {
+		return nil, coreparser.NewParseError(coreparser.ErrorCredentialRequired, errors.New("universal music parser is disabled until guarded credentials are wired"))
+	}
+	cfg := currentApplicationRunnerConfig().Universal
+	bridge, err := universalparser.NewPythonBridge(universalparser.Config{
+		PythonBin: cfg.PythonBinary, BridgeScript: cfg.BridgeScript,
+		VideoDLPath: cfg.VideoSource, MusicDLPath: cfg.MusicSource, WorkDir: cfg.WorkDir,
+		BridgeTimeout: int(cfg.VideoTimeout.Seconds()), MusicDLTimeout: int(cfg.MusicTimeout.Seconds()),
+		MusicDLItemLimit: cfg.MusicItemLimit,
 	})
+	if err != nil {
+		return nil, err
+	}
 
 	logInfof("universal parser started target=%s", targetForLog(rawURL))
 	req := universalparser.ParseRequest{
-		URL:             rawURL,
-		Limit:           5,
-		MusicItemLimit:  cfg.MusicDLItemLimit,
-		MusicConfigJSON: cfg.MusicDLConfigJSON,
+		URL:            rawURL,
+		Limit:          5,
+		MusicItemLimit: cfg.MusicItemLimit,
 	}
 	var data universalparser.ParseData
-	var err error
-	if looksLikeMusicURL(rawURL) {
-		if cfg.MusicDLItemLimit > 0 {
-			req.Limit = cfg.MusicDLItemLimit
-		}
-		data, err = bridge.ParseMusicPlaylist(context.Background(), req)
-	} else {
-		data, err = bridge.ParseVideo(context.Background(), req)
-	}
+	data, err = bridge.ParseVideo(ctx, req)
 	if err != nil {
 		logErrorf("universal parser failed target=%s error=%v", targetForLog(rawURL), err)
 		return nil, err
@@ -48,30 +42,28 @@ func tryParseWithUniversalParser(rawURL string) (*parseResult, error) {
 	serverData := parseDataFromUniversal(data)
 	source := firstNonEmpty(serverData.Platform, detectSource(rawURL), "universal")
 	serverData.Platform = source
-	serverData.SourceURL = rawURL
+	serverData.SourceURL = safePersistentSourceURL(rawURL)
 	logInfof("universal parser succeeded target=%s platform=%s type=%s", targetForLog(rawURL), source, serverData.Type)
 	return &parseResult{
 		source:       source,
 		sourceURL:    rawURL,
-		parserEngine: runtimecfg.ParserEngineUniversal,
+		parserEngine: config.ParserEngineUniversal,
 		info:         toVideoParseInfo(serverData),
 		data:         serverData,
 	}, nil
 }
 
 func universalParserDiagnostics() map[string]any {
-	cfg := runtimecfg.UniversalParser()
-	bridge := universalparser.NewPythonBridge(universalparser.Config{
-		PythonBin:         cfg.PythonBin,
-		BridgeScript:      cfg.BridgeScript,
-		VideoDLPath:       cfg.VideoDLPath,
-		MusicDLPath:       cfg.MusicDLPath,
-		WorkDir:           cfg.WorkDir,
-		BridgeTimeout:     cfg.TimeoutSeconds,
-		MusicDLTimeout:    cfg.MusicDLTimeoutSeconds,
-		MusicDLItemLimit:  cfg.MusicDLItemLimit,
-		MusicDLConfigJSON: cfg.MusicDLConfigJSON,
+	cfg := currentApplicationRunnerConfig().Universal
+	bridge, err := universalparser.NewPythonBridge(universalparser.Config{
+		PythonBin: cfg.PythonBinary, BridgeScript: cfg.BridgeScript,
+		VideoDLPath: cfg.VideoSource, MusicDLPath: cfg.MusicSource, WorkDir: cfg.WorkDir,
+		BridgeTimeout: int(cfg.VideoTimeout.Seconds()), MusicDLTimeout: int(cfg.MusicTimeout.Seconds()),
+		MusicDLItemLimit: cfg.MusicItemLimit,
 	})
+	if err != nil {
+		return map[string]any{"enabled": false, "guarded": false, "error": err.Error()}
+	}
 	return bridge.Health(context.Background())
 }
 

@@ -412,7 +412,7 @@ git commit -m "refactor: add typed configuration and app lifecycle"
 subprocess proxy 与 AST/go-types 门禁。Task 3 不能提交任何临时裸 HTTP client/adapter，也不能先迁移
 parser、留待 Task 4 才修网络安全。
 
-- [ ] **步骤 1：编写 parser 契约和注册表失败测试**
+- [x] **步骤 1：编写 parser 契约和注册表失败测试**
 
 ```go
 type Parser interface {
@@ -516,13 +516,13 @@ netguard adapter）不得自建 http/resty client/transport、用 DefaultClient/
 `m3u8` 不属于现有 26-platform native catalog，Task 3 不伪造对应 descriptor；它作为安全媒体合并能力由
 Task 9 在 Go 预取/本地 ffmpeg 门禁完成后注册路由与 capability。
 
-- [ ] **步骤 2：确认测试失败**
+- [x] **步骤 2：确认测试失败**
 
 运行：`go test ./internal/netguard ./internal/parser/... -count=1`
 
 预期：FAIL，netguard core、parser 包和接口尚未建立。
 
-- [ ] **步骤 3：先建立安全 core，再机械迁移并适配 Parser 接口**
+- [x] **步骤 3：先建立安全 core，再机械迁移并适配 Parser 接口**
 
 先实现 `internal/netguard` 的安全 core：不可日志化 `FetchURL`、允许持久化/响应的 `SafeURL`、请求前
 host/IP 校验、DNS/实际 dial 绑定、每跳 redirect 重验、跨 origin/host 敏感 header 剥离、TLS 强校验，
@@ -544,6 +544,14 @@ constructor。
 `catalog.golden.json` 必须与当前 26 platform key、41 host rule、21 个 ID 能力逐项完全相等；测试拒绝
 缺失、多出、重排后语义漂移或把 `media-parser` 的 50-domain 候选静默并入 production。研究 alias 只能
 经独立合法性、安全、契约和基准审查后由显式任务更新 golden，不能使用 `Subset` 放宽目录。
+
+本次对固定 commit 与 `ucmao/media-parser` 的逐条复核还明确了一个兼容性裁决：研究项目的 50 条
+`exact netloc` 不是 baseline authority，不能用来静默缩小固定 commit 对现有 41 条 domain 一律执行的
+label-boundary controlled-subdomain 契约。Task 3 保持并由 golden/行为测试锁定这 41 条显式
+`IncludeSubdomains=true`，同时继续拒绝 `<approved-host>.evil` 这类恶意后缀。把其中 31 条收紧为 exact、
+其余 10 条改成完整 exact alias 集合是 Task 10 的隔离研究候选：只有 canonical/legacy fixture、93 样本、
+前端契约和独立安全审查证明不减少行为后，才能由单独变更更新 production golden；不得把安全理想值
+冒充已经批准的兼容性变化。
 构建 registry 时拒绝重复或歧义的 key/alias/domain、保持确定顺序并使用规范 host 精确匹配；研究项目的
 50 个 domain alias 只作候选目录，未经当前来源、canonical 93 样本或新增独立 fixture 验证不得进入
 production registry。`Result` 内部增加强类型 `ImageAsset{URL, LivePhotoURL}` 与
@@ -591,7 +599,7 @@ Task 3 在 API 内执行裸 subprocess 或把“disabled”冒充 fallback enabl
 descriptor registry、pinned bridge/runner 与 Actions-only immutable image 边界。不得等 Task 11 删除旧
 server 才修 import，也不得用 scoped parser tests掩盖 broken tree。
 
-- [ ] **步骤 4：保留并复验已前置完成的 Cookie 安全边界**
+- [x] **步骤 4：保留并复验已前置完成的 Cookie 安全边界**
 
 安全纠偏已将微博和西瓜请求改为仅在 typed `ParserConfig` 对应 Cookie 非空时添加 Cookie header；
 本步骤迁移文件时必须保持空值不设置、trim 后注入的行为与回归测试。AST policy helper 同时接入仓库
@@ -601,7 +609,7 @@ worktree 不能遮住 staged Cookie literal，测试/仓库默认不含 Cookie�
 测试不得打印派生 token、完整 URL/query 或上游响应。universal 从无测试状态补齐 constructor/env/output/
 timeout/process-group/Raw-field allowlist 覆盖；未知 `Raw map` 字段不得进入统一 Result、日志或响应。
 
-- [ ] **步骤 5：验证原生解析器回归**
+- [x] **步骤 5：验证原生解析器回归**
 
 运行：
 
@@ -614,7 +622,7 @@ GOMAXPROCS=2 go test ./... -count=1
 
 预期：全部 PASS，原固定提交 parser 测试均保留。
 
-- [ ] **步骤 6：Commit**
+- [x] **步骤 6：Commit**
 
 ```bash
 # 同时 stage rename/delete/new；不要在 git mv 后再执行可能 pathspec 失败的 git rm。
@@ -637,6 +645,8 @@ git commit -m "refactor: isolate parser adapters and remove embedded credentials
 - 修改：`internal/netguard/validator.go`
 - 修改：`internal/netguard/transport.go`
 - 修改：`internal/netguard/validator_test.go`
+- 创建：`internal/netguard/authority.go`
+- 创建：`internal/netguard/authority_test.go`
 - 创建：`internal/netguard/proxy.go`
 - 创建：`internal/netguard/proxy_test.go`
 - 创建：`cmd/parser-helper/main.go`
@@ -676,6 +686,18 @@ public/private DNS answer；DNS error/timeout/NXDOMAIN/空答案全部 fail clos
 fragment/control/backslash/非法 escape/IPv6 zone/非法 bidi 或 joiner；端口按 purpose allowlist。
 另测跨 origin/host redirect 必须剥离 Cookie/Authorization/平台会话 header，response header、wire body、
 解压后 body 任一超限都拒绝；禁止盲目 HTTP→HTTPS 字符串改写和跳过 TLS 校验。
+
+同时先写 purpose-scoped authority 红测，不能把“输入识别目录”误当成“解析器可访问的全部公网”：
+
+- `TestPurposeScopedOutboundAuthority`：`InputShare`、`MetadataAPI`、`SessionBootstrap/SessionConsumer`、
+  `MediaCandidate` 四类用途互不替代；
+- `TestEveryNativeFixedEndpointHasPolicyOwner`：production parser 中每个固定 API authority 都有唯一
+  descriptor/purpose owner，漏登记立即 fail closed；
+- `TestParserAPIAuthorityCannotBeUsedAsInputRoute`：例如 `api.bilibili.com` 只允许 Bilibili metadata，
+  绝不能因此成为用户输入 host；
+- `TestSensitiveHeadersNeverReachDynamicMediaCandidateHost` 与 `TestCrossPurposeRedirectFailsClosed`：动态
+  CDN 可在公网/资源门禁内使用，但永远不继承 Cookie、Authorization、session、Origin 或跨源 Referer，
+  redirect 也不能从低权限 purpose 升级到凭据/API purpose。
 
 ```go
 func TestDialContextRejectsResolvedPrivateTarget(t *testing.T) {
@@ -727,6 +749,13 @@ resty 只能在 netguard adapter 内由已注入的受控 transport 构造，禁
 HTTP(S)_PROXY/ALL_PROXY/NO_PROXY 一律忽略；外部 HTTP/SOCKS proxy 只有在自身地址先验证且使用 pinned-IP
 CONNECT、不让远端重新解析目标时才可启用，`socks5h`/remote DNS 和 proxy userinfo 禁止进入普通配置、
 DB、日志或 0644 文件。
+
+`internal/netguard/authority.go` 维护与 Descriptor 绑定、不可由 parser 伪造的用途能力：用户输入只走
+现有 41 条显式 HostRule；Bilibili/虎牙/皮皮虾/微博/腾讯视频等固定 metadata/API host 必须逐项 exact
+登记到对应 parser；session bootstrap 与 consumer 继续 exact host 且只有该用途能取得敏感材料；动态
+MediaCandidate 仅获得无凭据的公网 fetch 权限。校验发生在首次请求、每次 redirect 和实际 dial 之前，
+并把 parser key、purpose 与 authority policy fingerprint 绑定到同一 request budget。禁止 parser 通过
+自行拼接静态 API URL、借用另一 parser 的 endpoint 或把 metadata authority 反向注册成 InputShare 绕过。
 Go native parser 在 API 进程内使用上述 transport。yt-dlp/universal 不在可直接访问外网的 API 进程
 启动：API 只通过 shared UDS 的有界、鉴权 job protocol 把任务交给 stateless、
 network-isolated `parser-helper`。helper 无业务 HTTP、公开端口、DB/Redis/运行秘密，只连接 Compose `internal: true` 的
@@ -1296,6 +1325,10 @@ Task 4 的全树 network/subprocess self-audit 必须先因新增 ffmpeg sink �
 `internal/media/m3u8.go` 中经过类型检查的精确本地 argv-builder/runner 符号做最小 allowlist。恶意 fixture
 证明同目录新 `exec.Command*`、动态 executable、remote URL 或扩大 protocol whitelist 仍被拒绝。
 
+另加 Bilibili 回归门禁：未配对的 DASH video/audio 轨不得投影成同步 `VideoURL`，多条 `durl` 是顺序
+分片而不是 fallback；只有 Task 9 的持久媒体任务取得并验证明确 video+audio pair 后，才允许以并发最多
+2 的 Go 预取和本地 file-only ffmpeg 合并。
+
 同一行为测试锁定 canonical route-auth inventory：fallback create 可保持匿名兼容，但必须同时满足
 attempt/limit/SSRF（`attempt>=4`、限流/并发/大小门禁与 netguard）。cache shareId 与 parse poll 使用
 用途/TTL 绑定的 crypto-random >=128-bit ID 本身作为 bearer capability；fallback poll/download 使用
@@ -1418,6 +1451,14 @@ trust anchor，禁止写入 fixture 自身造成自引用。fixture 当前尚未
 hash 与 `productionEnabled=false`，并证明该路径/内容不参与 baseline fixture/hash。若没有这种候选，
 Task 10 evidence 必须写 `coverage clue not adopted`，不能把上游 50-domain 线索计作已支持平台。只有单独变更同时通过 descriptor
 唯一性、URL/netguard、资源门禁、当前 API 契约和稳定性测试后，候选才能进入 production registry。
+
+本次固定 tree 的 exact 目录差异还要作为显式候选而非口头建议记录：TikTok/YouTube/知乎共 8 条当前
+未批准平台 host，以及 `c.kuaishou.com`、`m.kuaishou.com`、`m.chenzhongtech.com`、
+`v.m.chenzhongtech.com`、`izuiyou.com`、`kg2.qq.com`、`m.acfun.cn`、`m.huya.com`、`pipix.com`、
+`quanmin.hao224.com` 共 10 条现有平台 alias，全部默认 `productionEnabled=false`。同一步评估把当前
+broad HostRule 改成完整 exact alias 集合的可行性，特别把 `m.weibo.cn`（微博）与
+`m.oasis.weibo.cn`（绿洲）的语义冲突作为必测负例；任何收紧都必须证明不减少固定 41-domain/93 样本
+兼容覆盖后再单独更新 golden。
 
 - [ ] **步骤 5：验证**
 

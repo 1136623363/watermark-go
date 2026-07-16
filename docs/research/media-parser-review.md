@@ -40,16 +40,37 @@
 ### Parser 注册表
 
 任务 3 将简单 map 提升为 metadata-driven Descriptor registry。每个 descriptor 至少包含稳定
-ASCII `PlatformKey`、显示名、aliases、精确 domains、capabilities、确定性 priority、允许保留的 query
+ASCII `PlatformKey`、显示名、aliases、显式 HostRule、capabilities、确定性 priority、允许保留的 query
 keys 和构造函数。
 注册时必须拒绝重复/歧义 key、alias、domain，输出顺序稳定；host 使用规范化后的精确匹配，不做可被
 恶意后缀利用的字符串包含匹配。上游的 50 个 alias 只作为候选覆盖目录，只有被当前固定来源、93 样本
 或新增独立 fixture 验证的平台/domain 才能进入 production registry。
 
+这里的“精确匹配”指 exact host 或 DNS label-boundary 的显式 controlled-subdomain rule，不是把研究项目
+的 50 条 exact netloc 反向当成当前兼容基线。固定 commit 对已有 41 条 domain 全部采用
+`host == domain || HasSuffix(host, "."+domain)`；Task 3 因而锁定 41/41 `IncludeSubdomains=true` 和恶意
+后缀拒绝行为。研究发现的“31 条可收紧、10 条需先补全已知 child alias”只进入 Task 10 候选；未通过
+canonical/legacy fixture、93 样本与前端契约前，不能静默缩小 production 输入集合。
+
 能力位至少区分 video、gallery、audio、live-photo、m3u8。parser 构造函数必须纯净、零 I/O；依赖注入
 受控 HTTP client、clock、短期 token provider 和 logger，不能自行读取环境、构造 client 或启动进程。
 `Parse` 一次获取并解析上游快照，再返回完整结果；getter 不得各自重复发起请求。注册表测试覆盖唯一性、
 稳定路由、声明能力与结果的一致性、未知 host typed failure、构造零 I/O 和单次 parse 的上游 fetch 次数。
+
+### 输入目录与出口 authority 分离
+
+上游集中 `DOMAIN_TO_NAME` 的真正优点是可审计的用户输入识别，但它没有解决 parser 内固定 API host
+散落的问题。任务 4 将 authority 按用途拆成 `InputShare`、`MetadataAPI`、
+`SessionBootstrap/SessionConsumer` 与 `MediaCandidate`：输入 HostRule 不能自动授权同域 API；固定
+metadata endpoint 必须 exact 归属唯一 parser；session 材料只交给 exact consumer；动态 CDN 只取得
+无 Cookie/Authorization/session/Origin/跨源 Referer 的公网 fetch 能力。`api.bilibili.com` 之类 endpoint
+可由 Bilibili metadata purpose 使用，但绝不能作为用户输入路由或被其他 parser 借用。
+
+首次请求、每跳 redirect 和实际 dial 都校验 parser key + purpose + authority policy fingerprint；跨
+purpose redirect fail closed。任务 4 的 `TestPurposeScopedOutboundAuthority`、
+`TestEveryNativeFixedEndpointHasPolicyOwner`、`TestParserAPIAuthorityCannotBeUsedAsInputRoute`、
+`TestSensitiveHeadersNeverReachDynamicMediaCandidateHost` 和 `TestCrossPurposeRedirectFailsClosed` 共同形成
+可执行门禁。
 
 ### URL 提取与规范化
 
@@ -106,6 +127,12 @@ retryable；外部仍只映射当前前端固定 `code/msg/data/requestId`，不
 
 ## 明确拒绝的做法
 
+- 固定 tree 的快手 parser 含大段硬编码 Cookie/用户会话样材料，Douyin 含固定 ttwid/webid；这些内容只
+  作为“不得复制”的审计证据，不能进入源码、fixture、日志或 provenance artifact。
+- TikTok 实际调用第三方 `tikwm.com`，多个网络路径无 timeout，并存在大量 bare `except`/静默吞错；
+  README 的平台支持与测试声明也没有仓库内 tests/CI 佐证。因此它们不是 native/fallback 准入证据。
+- 上游 Dockerfile/Compose 的可变基础 tag、root/`chmod 777`、运行时镜像源和本地 `build:` 全部拒绝；
+  当前项目继续 Actions-only immutable image、目标机 pull-only，本服务器也不得编译镜像。
 - `utils/web_fetcher.py:16-41` 在第一次 GET 之后才检查受支持域名。我们要求首次网络请求前完成 SSRF 校验，
   后续每跳继续校验，绝不复用这个顺序。
 - 上游多个位置会记录原始 URL或异常文本。我们的日志和 evidence 不保存完整 path/query、Cookie、
