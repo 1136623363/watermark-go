@@ -1403,7 +1403,7 @@ git commit -m "feat: add durable asynchronous parse tasks"
 - 修改：`internal/policy/network_egress_test.go`（把本地-only ffmpeg 固定 argv builder 加入精确符号清单，
   并拒绝任何 remote protocol/动态 executable；不得按目录豁免 `internal/media`）
 
-- [ ] **步骤 1：编写大小、并发、Range、TTL、SSRF 和前端状态测试**
+- [x] **步骤 1：编写大小、并发、Range、TTL、SSRF 和前端状态测试**
 
 视频/音频/图片上限分别为 300/50/20 MiB，全局并发 2、单客户端并发 1；
 只接受任务创建 `attempt>=4`；完成下载必须对完整 GET 返回 200、对合法 Range 返回 206。
@@ -1436,20 +1436,24 @@ attempt/limit/SSRF（`attempt>=4`、限流/并发/大小门禁与 netguard）。
 可枚举资源。前端实际发送认证的入口同时兼容 `token` header 与
 `Authorization: Bearer`（token/Bearer），不得要求前端未发送的 header。
 
-- [ ] **步骤 2：确认失败**
+- [x] **步骤 2：确认失败**
 
 运行：`go test ./internal/download ./internal/media ./internal/httpapi -run 'TestDownload|TestM3U8|TestDASH' -count=1`
 
 预期：FAIL。
 
-- [ ] **步骤 3：实现下载任务与签名 ticket**
+结果：按预期失败，缺失 `internal/download`、`internal/media` 与下载 HTTP contract API。
+
+- [x] **步骤 3：实现下载任务与签名 ticket**
 
 ticket 使用独立 `DOWNLOAD_TOKEN_SECRET` 的 HMAC-SHA256，不能回退到管理员 session secret，绑定非空
 task ID、过期时间和用途；文件名由服务生成，禁止路径穿越。
 所有临时根由服务创建为 `0700`，临时与最终任务文件固定 `0600` 且拒绝 symlink；文件先写 `.part`，
 校验长度和媒体类型后 fsync + 原子重命名，TTL 清理不删除运行中任务，失败/取消/lease 丢失必须清理。
+已实现 `internal/download` 的 HMAC ticket、attempt/SSRF/并发/大小门禁、Range 文件服务、idle stream seam、
+原子私有文件写入与 TTL 清理。
 
-- [ ] **步骤 4：实现 m3u8 安全合并**
+- [x] **步骤 4：实现 m3u8 安全合并**
 
 Go 通过 netguard 预取并验证 manifest、有限层级子清单和全部分片，限制层级、分片数、单片与累计
 字节；拒绝加密、私网目标、绝对路径、`..` 和 `file/concat/data/crypto`。每个资源写入受控临时根内由
@@ -1466,7 +1470,12 @@ remote URL/shell；lease/context 取消杀整个进程组并清理 `.part`。DAS
 同步 parse handler。对应 `TestDASH*` 和 network policy 精确 symbol 与 m3u8 同 commit，禁止留下无 owner
 的验收声明。
 
-- [ ] **步骤 5：注册兼容接口并验证**
+已实现 `internal/media` 的 m3u8 manifest 验证/本地化、DASH paired-only async seam、稳定候选排序与 fallback
+预算、有界并发 2 预取、file-only ffmpeg argv builder，以及 context/timeout 终止进程组的本地 runner。
+policy 仅允许 `internal/media/runner.go:newLocalFFmpegCommand` 精确 subprocess seam，且同文件其他
+`exec.CommandContext` 仍会被拒绝。
+
+- [x] **步骤 5：注册兼容接口并验证**
 
 运行：
 
@@ -1477,7 +1486,20 @@ GOMAXPROCS=2 go test ./... -count=1
 
 预期：全部 PASS；任务成功响应兼容 `status:"done", url:"..."` 和 fallback `completed/downloadUrl`。
 
-- [ ] **步骤 6：Commit**
+结果：
+
+```bash
+go test ./internal/download ./internal/media ./internal/httpapi -run 'TestDownload|TestM3U8|TestDASH' -count=1
+GOMAXPROCS=2 go test ./internal/download ./internal/media ./internal/httpapi ./internal/policy -count=1
+GOMAXPROCS=2 go test ./... -count=1
+go vet ./...
+git diff --check
+go test ./internal/policy -run TestRepositorySecurityAuditCoversIndexWorktreeHistoryAndRefs -count=1
+```
+
+全部通过；期间未运行 Docker/Buildx/镜像构建命令。
+
+- [x] **步骤 6：Commit**
 
 ```bash
 git add internal/download internal/media internal/httpapi/download_handlers.go \

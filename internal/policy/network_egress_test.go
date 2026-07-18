@@ -1,6 +1,7 @@
 package policy_test
 
 import (
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/importer"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/1136623363/watermark-go/internal/media"
 	"golang.org/x/tools/go/packages"
 )
 
@@ -78,10 +80,122 @@ func TestProductionNetworkEgressAnalyzerRejectsAliasDotImportAndSubprocessBypass
 	}
 }
 
+func TestMediaFFmpegCommandBuilderIsLocalOnlyAndNotDirectoryAllowlisted(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	command, err := media.BuildFFmpegCommand(media.FFmpegCommandRequest{
+		Executable:   "ffmpeg",
+		TempRoot:     root,
+		ManifestPath: filepath.Join(root, "playlist.local.m3u8"),
+		OutputPath:   filepath.Join(root, "output.mp4"),
+	})
+	if err != nil {
+		t.Fatalf("BuildFFmpegCommand() error = %v", err)
+	}
+	if command.Executable != "ffmpeg" {
+		t.Fatalf("ffmpeg executable = %q, want fixed ffmpeg", command.Executable)
+	}
+	joined := strings.Join(append([]string{command.Executable}, command.Args...), " ")
+	for _, forbidden := range []string{"http://", "https://", "concat:", "crypto:", "file://", "data:"} {
+		if strings.Contains(joined, forbidden) {
+			t.Fatalf("ffmpeg command contains forbidden protocol %q: %s", forbidden, joined)
+		}
+	}
+	if !argumentPair(command.Args, "-protocol_whitelist", "file") {
+		t.Fatalf("ffmpeg command missing exact file-only protocol whitelist: %#v", command.Args)
+	}
+	for _, test := range []struct {
+		name    string
+		request media.FFmpegCommandRequest
+		want    error
+	}{
+		{
+			name: "dynamic executable",
+			request: media.FFmpegCommandRequest{
+				Executable:   filepath.Join(root, "ffmpeg"),
+				TempRoot:     root,
+				ManifestPath: filepath.Join(root, "playlist.local.m3u8"),
+				OutputPath:   filepath.Join(root, "output.mp4"),
+			},
+			want: media.ErrFFmpegExecutable,
+		},
+		{
+			name: "remote manifest",
+			request: media.FFmpegCommandRequest{
+				Executable:   "ffmpeg",
+				TempRoot:     root,
+				ManifestPath: "https://example.com/playlist.m3u8",
+				OutputPath:   filepath.Join(root, "output.mp4"),
+			},
+			want: media.ErrUnsafeLocalPath,
+		},
+		{
+			name: "path traversal output",
+			request: media.FFmpegCommandRequest{
+				Executable:   "ffmpeg",
+				TempRoot:     root,
+				ManifestPath: filepath.Join(root, "playlist.local.m3u8"),
+				OutputPath:   filepath.Join(root, "..", "escape.mp4"),
+			},
+			want: media.ErrUnsafeLocalPath,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := media.BuildFFmpegCommand(test.request); !errors.Is(err, test.want) {
+				t.Fatalf("BuildFFmpegCommand() error = %v, want %v", err, test.want)
+			}
+		})
+	}
+	if productionEgressPrimitiveAllowed(root, filepath.Join(root, "internal", "media", "m3u8.go")) {
+		t.Fatal("internal/media must not be directory/file allowlisted for production subprocess primitives")
+	}
+	if productionEgressPrimitiveAllowed(root, filepath.Join(root, "internal", "media", "runner.go")) {
+		t.Fatal("internal/media/runner.go must not be file allowlisted for production subprocess primitives")
+	}
+	runnerPath := filepath.Join(root, "internal", "media", "runner.go")
+	safeRunnerSource := `package media
+import (
+	"context"
+	"os/exec"
+)
+type FFmpegCommand struct { Executable string; Args []string }
+func newLocalFFmpegCommand(ctx context.Context, command FFmpegCommand) *exec.Cmd {
+	return exec.CommandContext(ctx, command.Executable, command.Args...)
+}`
+	if violations := analyzeProductionEgressFixtureAt(t, root, runnerPath, safeRunnerSource); len(violations) != 0 {
+		t.Fatalf("exact ffmpeg command seam rejected: %v", violations)
+	}
+	unsafeRunnerSource := `package media
+import (
+	"context"
+	"os/exec"
+)
+func other(ctx context.Context) *exec.Cmd {
+	return exec.CommandContext(ctx, "curl", "https://example.test")
+}`
+	if violations := analyzeProductionEgressFixtureAt(t, root, runnerPath, unsafeRunnerSource); len(violations) == 0 {
+		t.Fatal("same-file subprocess outside exact ffmpeg seam bypassed analyzer")
+	}
+}
+
+func argumentPair(values []string, left string, right string) bool {
+	for index := 0; index+1 < len(values); index++ {
+		if values[index] == left && values[index+1] == right {
+			return true
+		}
+	}
+	return false
+}
+
 func analyzeProductionEgressFixture(t *testing.T, source string) []string {
 	t.Helper()
+	return analyzeProductionEgressFixtureAt(t, "", "fixture.go", source)
+}
+
+func analyzeProductionEgressFixtureAt(t *testing.T, root string, filename string, source string) []string {
+	t.Helper()
 	files := token.NewFileSet()
-	file, err := parser.ParseFile(files, "fixture.go", source, 0)
+	file, err := parser.ParseFile(files, filename, source, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +208,7 @@ func analyzeProductionEgressFixture(t *testing.T, source string) []string {
 	if _, err := configuration.Check("fixture", files, []*ast.File{file}, info); err != nil {
 		t.Fatal(err)
 	}
-	return productionEgressViolations("", "fixture.go", file, info)
+	return productionEgressViolations(root, filename, file, info)
 }
 
 func productionEgressViolations(root, filename string, file *ast.File, info *types.Info) []string {
@@ -103,9 +217,13 @@ func productionEgressViolations(root, filename string, file *ast.File, info *typ
 		return violations
 	}
 	aliases := forbiddenProductionFunctionAliases(file, info)
+	functions := productionFunctionRanges(file)
 	ast.Inspect(file, func(node ast.Node) bool {
 		switch typed := node.(type) {
 		case *ast.CallExpr:
+			if productionEgressCallAllowed(root, filename, typed, info, functions) {
+				break
+			}
 			switch functionExpression := unparenProductionExpression(typed.Fun).(type) {
 			case *ast.SelectorExpr:
 				if label, forbidden := directForbiddenProductionFunction(functionExpression, info); forbidden {
@@ -140,6 +258,53 @@ func productionEgressViolations(root, filename string, file *ast.File, info *typ
 		return true
 	})
 	return violations
+}
+
+type productionFunctionRange struct {
+	name  string
+	start token.Pos
+	end   token.Pos
+}
+
+func productionFunctionRanges(file *ast.File) []productionFunctionRange {
+	ranges := []productionFunctionRange{}
+	for _, declaration := range file.Decls {
+		function, ok := declaration.(*ast.FuncDecl)
+		if !ok || function.Name == nil {
+			continue
+		}
+		ranges = append(ranges, productionFunctionRange{name: function.Name.Name, start: function.Pos(), end: function.End()})
+	}
+	return ranges
+}
+
+func productionFunctionNameAt(ranges []productionFunctionRange, position token.Pos) string {
+	for _, current := range ranges {
+		if current.start <= position && position <= current.end {
+			return current.name
+		}
+	}
+	return ""
+}
+
+func productionEgressCallAllowed(root, filename string, call *ast.CallExpr, info *types.Info, functions []productionFunctionRange) bool {
+	if root == "" {
+		return false
+	}
+	rel, err := filepath.Rel(root, filename)
+	if err != nil {
+		return false
+	}
+	rel = filepath.ToSlash(rel)
+	if rel != "internal/media/runner.go" || productionFunctionNameAt(functions, call.Pos()) != "newLocalFFmpegCommand" {
+		return false
+	}
+	selector, ok := unparenProductionExpression(call.Fun).(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+	object, ok := info.Uses[selector.Sel].(*types.Func)
+	return ok && object.Pkg() != nil && object.Pkg().Path() == "os/exec" && object.Name() == "CommandContext"
 }
 
 func productionRoundTripViolations(root, filename string, file *ast.File, info *types.Info) []string {
