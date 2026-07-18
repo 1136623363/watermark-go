@@ -26,6 +26,7 @@ type imageLock struct {
 		Version string `json:"version"`
 		Commit  string `json:"commit"`
 		SHA256  string `json:"sha256"`
+		Archive string `json:"archive"`
 	} `json:"tools"`
 	PythonRequirements []struct {
 		Name    string   `json:"name"`
@@ -109,6 +110,14 @@ func TestDockerfileAndImageLockPolicy(t *testing.T) {
 		if repeatedHexPlaceholder(strings.TrimPrefix(locked.SHA256, "sha256:")) {
 			t.Fatalf("tool %s uses a placeholder sha256: %#v", tool, locked)
 		}
+		if locked.Commit != "" {
+			if !regexp.MustCompile(`^[a-f0-9]{40}$`).MatchString(locked.Commit) {
+				t.Fatalf("tool %s commit is not a fixed lowercase git SHA: %#v", tool, locked)
+			}
+			if repeatedHexPlaceholder(locked.Commit) {
+				t.Fatalf("tool %s uses a placeholder commit: %#v", tool, locked)
+			}
+		}
 	}
 }
 
@@ -117,10 +126,11 @@ func TestDockerfilePinsRuntimeToolchainSources(t *testing.T) {
 	lock := readImageLock(t, root)
 	dockerfile := readPolicyDocument(t, root, "Dockerfile")
 	required := []string{
-		"snapshot.debian.org/archive/debian/20260718T000000Z",
-		"ffmpeg=7:5.1.9-0+deb12u1",
 		"ADD --checksum=" + lock.Tools["videodl"].SHA256 + " https://github.com/CharlesPikachu/videodl/archive/" + lock.Tools["videodl"].Commit + ".tar.gz /tmp/videodl.tar.gz",
 		"ADD --checksum=" + lock.Tools["musicdl"].SHA256 + " https://github.com/CharlesPikachu/musicdl/archive/" + lock.Tools["musicdl"].Commit + ".tar.gz /tmp/musicdl.tar.gz",
+		"ADD --checksum=" + lock.Tools["ffmpeg"].SHA256 + " " + lock.Tools["ffmpeg"].Archive + " /tmp/ffmpeg.tar.xz",
+		"FFMPEG_BINARY=/usr/local/bin/ffmpeg",
+		"/usr/local/bin/ffmpeg",
 		"/app/third_party/CharlesPikachu/videodl",
 		"/app/third_party/CharlesPikachu/musicdl",
 		"python -m pip install --no-cache-dir --require-hashes -r /tmp/requirements.lock",
@@ -133,6 +143,7 @@ func TestDockerfilePinsRuntimeToolchainSources(t *testing.T) {
 	for _, forbidden := range []string{
 		"apt-get install -y ffmpeg\n",
 		"apt-get install -y --no-install-recommends ffmpeg\n",
+		"snapshot.debian.org/archive/debian/",
 		"github.com/CharlesPikachu/videodl.git",
 		"github.com/CharlesPikachu/musicdl.git",
 	} {
@@ -237,6 +248,10 @@ func TestWorkflowUsesPinnedActionsAndBuildAttestations(t *testing.T) {
 		"go test ./...",
 		"scripts/verify-gitleaks.sh",
 		"docker/build-push-action",
+		"steps.build.outputs.digest",
+		"Runtime tool smoke",
+		"/usr/local/bin/ffmpeg",
+		"py_compile /app/bridges/universal/python/bridge.py",
 		"provenance: true",
 		"sbom: true",
 		"push: true",
@@ -478,7 +493,7 @@ func envMap(service map[string]any) map[string]string {
 }
 
 func repeatedHexPlaceholder(value string) bool {
-	if len(value) != 64 {
+	if len(value) != 40 && len(value) != 64 {
 		return false
 	}
 	first := value[0]

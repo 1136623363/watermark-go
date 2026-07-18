@@ -2512,15 +2512,22 @@ git commit -m "ci: publish reproducible GHCR image without Jenkins"
 
 **完成证据（2026-07-18）：** 已以 TDD 增补 Docker/CI policy，红灯确认失败后实现可复现镜像输入锁定、
 无 Jenkins Actions、A/B 单机 Compose、migration-tools、固定 Gitleaks 全历史扫描脚本与 promotion marker
-排除。固定官方基础镜像 digest、Debian snapshot `20260718T000000Z` 的 `ffmpeg=7:5.1.9-0+deb12u1`、
-`yt-dlp==2026.7.4` wheel hash、`videodl` commit `28c566ed55953ef201956ea30c3274ccfab18c84`
-tarball hash 与 `musicdl` commit `bd74f2528a0e37854f42ee6dcce344c153229a6e` tarball hash。当前宿主机
-严格未执行 `docker build`、`docker compose build` 或 `buildx build`；仅执行
-`docker compose -f deploy/compose.yml config --quiet` 做静态渲染校验。验证通过：
-`go test ./internal/policy -count=1`、`GOMAXPROCS=2 go test ./... -count=1`、`go vet ./...`、
-`GOMAXPROCS=2 go test -race ./internal/httpapi ./internal/auth ./tests/contracts -count=1`、
-`python3 -m py_compile ...`、`scripts/verify-gitleaks.sh`、`git diff --check`，并确认旧 Compose/Jenkins/
-mutable sync 入口仍不存在。
+排除。基础镜像 digest 通过只读 registry manifest 查询固定；`yt-dlp==2026.7.4` 使用 hash-locked
+`requirements.lock`；`videodl` 固定 commit `28c566ed55953ef201956ea30c3274ccfab18c84` 与 tarball
+SHA-256 `b3f0761970d307b210859b6b9a3b530d7b93543479ad300d7ed6fd6a68dc0efa`；`musicdl` 固定 commit
+`bd74f2528a0e37854f42ee6dcce344c153229a6e` 与 tarball SHA-256
+`17268accc270cd2ca7cd4150469078e89dc288bf71d9ccd3fa3555f093ec1e84`。计划核查时发现 Debian snapshot
+ffmpeg 方案可能偏离“可验证制品 hash”，已纠正为 BtbN 固定 release
+`autobuild-2026-07-17-13-22/ffmpeg-N-125649-g8d394252d8-linux64-lgpl.tar.xz`，使用 GitHub API 暴露的
+asset digest `a34cf29a2d0addbff273ff85e571a1a88f84d99fb6568506fa3845f73425aab2`，并在 workflow
+新增 digest-based runtime smoke：`yt-dlp --version`、`ffmpeg -version`、Python bridge `py_compile`。
+当前宿主机严格未执行 `docker build`、`docker compose build`、`docker buildx build` 或任何镜像构建；
+仅执行 `docker compose -f deploy/compose.yml config --quiet` 做静态渲染校验。验证通过：
+`go test ./internal/policy -run 'TestSensitiveDefaultScanner|TestRepositorySecurityAuditCoversIndexWorktreeHistoryAndRefs|TestDockerfile|TestWorkflow|TestCompose' -count=1`、
+`GOMAXPROCS=2 go test ./... -count=1`、`go vet ./...`、`scripts/verify-gitleaks.sh`、`git diff --check`、
+Compose config 静态渲染、旧 Compose/Jenkins 文件缺失检查和去集群/去 Jenkins 禁止项扫描。完整
+`videodl/musicdl` Python 依赖 hash lock 因上游依赖范围过大且解析回溯，未在 Task 13 中伪完成；已保留
+为 Task 15 media-parser focused suite 的显式验证/收敛项。
 
 ## 任务 14：实现基准、部署、监控和回滚脚本
 

@@ -82,6 +82,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push image
+        id: build
         uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
         with:
           context: .
@@ -94,3 +95,11 @@ jobs:
           labels: |
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.source=https://github.com/1136623363/watermark-go
+
+      - name: Runtime tool smoke
+        env:
+          IMAGE_REF: ghcr.io/1136623363/watermark-go@${{ steps.build.outputs.digest }}
+        run: |
+          docker run --rm --entrypoint /usr/local/bin/yt-dlp "$IMAGE_REF" --version
+          docker run --rm --entrypoint /usr/local/bin/ffmpeg "$IMAGE_REF" -version
+          docker run --rm --entrypoint /usr/local/bin/python3 "$IMAGE_REF" -m py_compile /app/bridges/universal/python/bridge.py

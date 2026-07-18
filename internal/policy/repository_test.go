@@ -296,6 +296,7 @@ func TestSensitiveDefaultScannerRejectsLiteralAndAllowsPlaceholders(t *testing.T
 		`APP_CLIENT_SIGNATURE_KEY=${APP_CLIENT_SIGNATURE_KEY}`,
 		`APP_CLIENT_SIGNATURE_KEY=${APP_CLIENT_SIGNATURE_KEY:?required}`,
 		`APP_CLIENT_SIGNATURE_KEY=${APP_CLIENT_SIGNATURE_KEY:-change-me}`,
+		`APP_CLIENT_SIGNATURE_KEY=__SET_IN_PRODUCTION_ENV__`,
 		`APP_CLIENT_SIGNATURE_KEY=invalid-for-test-only`,
 		`ADMIN_PASSWORD=change-me`,
 		`DOWNLOAD_TOKEN_SECRET=x`,
@@ -317,6 +318,14 @@ func TestSensitiveDefaultScannerRejectsLiteralAndAllowsPlaceholders(t *testing.T
 	if report := formatSensitiveMatches(scanSensitiveDefaults([]byte(unsafeFixtures[0]), "fixture.env", "working-tree")); strings.Contains(report, disallowed) {
 		t.Fatal("sanitized scanner report exposed a sensitive literal")
 	}
+	for _, allowed := range []string{
+		`id-token: write`,
+		`password: ${{ secrets.GITHUB_TOKEN }}`,
+	} {
+		if matches := scanSensitiveDefaults([]byte(allowed+"\n"), ".github/workflows/ci.yml", "working-tree"); len(matches) != 0 {
+			t.Errorf("workflow placeholder was rejected for %s", matches[0].Variable)
+		}
+	}
 }
 
 type sensitiveMatch struct {
@@ -333,7 +342,7 @@ const (
 
 var (
 	sensitiveAssignmentPattern = regexp.MustCompile(
-		`(^|[[:space:]{,(])["'` + "`" + `]?(` + configIdentifierExpression + `)["'` + "`" + `]?(?:[[:space:]]+[A-Za-z_][A-Za-z0-9_.*\[\]]*)?[[:space:]]*(:=|=|:)[[:space:]]*("[^"]*"|'[^']*'|` + "`[^`]*`" + `|\$\{(?:[^{}]|\$\{[^{}]*\})*\}[^[:space:],}]*|[^[:space:],}]+)`,
+		`(^|[[:space:]{,(])["'` + "`" + `]?(` + configIdentifierExpression + `)["'` + "`" + `]?(?:[[:space:]]+[A-Za-z_][A-Za-z0-9_.*\[\]]*)?[[:space:]]*(:=|=|:)[[:space:]]*("[^"]*"|'[^']*'|` + "`[^`]*`" + `|\$\{\{[^}]*\}\}|\$\{(?:[^{}]|\$\{[^{}]*\})*\}[^[:space:],}]*|[^[:space:],}]+)`,
 	)
 	dockerEnvironmentPattern = regexp.MustCompile(
 		`(?i)^[[:space:]]*ENV[[:space:]]+(` + configIdentifierExpression + `)(?:[[:space:]]+|[[:space:]]*=[[:space:]]*)(.*)$`,
@@ -471,6 +480,9 @@ func assignmentHasConfigurationContext(line string, variableStart, variableEnd i
 
 func shouldInspectSensitiveCandidate(variable, operator, candidate, path string) bool {
 	value := strings.TrimSpace(candidate)
+	if isGitHubWorkflowPath(path) && operator == ":" && strings.EqualFold(variable, "id-token") {
+		return false
+	}
 	if value == "" {
 		return true
 	}
@@ -487,6 +499,11 @@ func shouldInspectSensitiveCandidate(variable, operator, candidate, path string)
 		return true
 	}
 	return variable == strings.ToUpper(variable) && operator == "="
+}
+
+func isGitHubWorkflowPath(path string) bool {
+	normalized := filepath.ToSlash(path)
+	return strings.HasPrefix(normalized, ".github/workflows/") || strings.Contains(normalized, "/.github/workflows/")
 }
 
 func isSourceCodePath(path string) bool {
@@ -604,14 +621,20 @@ func isAllowedSensitiveDefault(candidate, variable string) bool {
 	if exactEnvironmentReferencePattern.MatchString(value) || exactRequiredEnvironmentPattern.MatchString(value) {
 		return true
 	}
+	if strings.HasPrefix(value, "${{") && strings.HasSuffix(value, "}}") && strings.Contains(value, "secrets.") {
+		return true
+	}
 	if groups := exactDefaultEnvironmentPattern.FindStringSubmatch(value); len(groups) == 2 {
 		return isAllowedSensitiveDefault(groups[1], variable)
 	}
 	lower := strings.ToLower(value)
+	if strings.EqualFold(variable, "id-token") && lower == "write" {
+		return true
+	}
 	if lower == "x" || lower == "bad" || lower == "test" || lower == "definitely-wrong" {
 		return true
 	}
-	for _, marker := range []string{"invalid-for-test-only", "change-me", "change_me", "example", "placeholder", "dummy", "redacted", "your"} {
+	for _, marker := range []string{"__set_in_production_env__", "invalid-for-test-only", "change-me", "change_me", "example", "placeholder", "dummy", "redacted", "your"} {
 		if lower == marker || strings.HasPrefix(lower, marker+"-") || strings.HasPrefix(lower, marker+"_") ||
 			strings.HasPrefix(lower, marker+".") || strings.HasPrefix(lower, marker+":") || strings.HasPrefix(lower, marker+"/") {
 			return true

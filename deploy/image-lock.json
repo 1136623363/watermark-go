@@ -39,10 +39,9 @@
       "archive": "https://github.com/CharlesPikachu/musicdl/archive/bd74f2528a0e37854f42ee6dcce344c153229a6e.tar.gz"
     },
     "ffmpeg": {
-      "version": "7:5.1.9-0+deb12u1",
-      "sha256": "sha256:2ba8ead87657c123ce6de2de5ecdbc1fb4ead9a4b317b85b8ec41e16c890fe01",
-      "snapshot": "https://snapshot.debian.org/archive/debian/20260718T000000Z",
-      "package": "pool/main/f/ffmpeg/ffmpeg_5.1.9-0+deb12u1_amd64.deb"
+      "version": "N-125649-g8d394252d8",
+      "sha256": "sha256:a34cf29a2d0addbff273ff85e571a1a88f84d99fb6568506fa3845f73425aab2",
+      "archive": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-07-17-13-22/ffmpeg-N-125649-g8d394252d8-linux64-lgpl.tar.xz"
     }
   },
   "pythonRequirements": [
