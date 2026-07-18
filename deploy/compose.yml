@@ -1,0 +1,293 @@
+name: watermark-single-node
+
+services:
+  data-gate-recovery:
+    profiles: ["recovery"]
+    image: ${RECOVERY_IMAGE:?same verified A registry digest}
+    command: ["/app/bin/watermark-go", "data-gate"]
+    environment:
+      DEPLOY_ROLE: recovery
+      DEPLOY_STAGE: ${RECOVERY_DATA_STAGE:?shadow or final}
+      EXPECTED_IMAGE_DIGEST: ${RECOVERY_IMAGE:?same verified A registry digest}
+      DEPLOYMENT_RUN_ID: ${DEPLOYMENT_RUN_ID:?current run}
+      GATE_ATTEMPT_ID: ${RECOVERY_GATE_ATTEMPT_ID:?current gate attempt}
+      GATE_MODE: ${RECOVERY_GATE_MODE:?apply or revalidate}
+      MIGRATION_SOURCE_DSN: ${RECOVERY_MIGRATION_SOURCE_DSN:?clone DSN}
+      MYSQL_DSN: ${RECOVERY_MIGRATION_TARGET_DSN:?least-privilege migrator DSN}
+      REDIS_NAMESPACE: ${RECOVERY_REDIS_NAMESPACE:?role-stage namespace}
+    networks: ["data"]
+    volumes: ["gate-receipt-recovery:/run/watermark-gate"]
+    read_only: true
+    restart: "no"
+    healthcheck: {disable: true}
+
+  api-recovery:
+    profiles: ["recovery"]
+    image: ${RECOVERY_IMAGE:?same verified A registry digest}
+    command: ["/app/bin/watermark-go", "serve"]
+    environment:
+      APP_ENV: production
+      PORT: "5001"
+      DEPLOY_ROLE: recovery
+      DEPLOY_STAGE: ${RECOVERY_DATA_STAGE:?shadow or final}
+      EXPECTED_IMAGE_DIGEST: ${RECOVERY_IMAGE:?same verified A registry digest}
+      DEPLOYMENT_RUN_ID: ${DEPLOYMENT_RUN_ID:?current run}
+      MYSQL_DSN: ${RECOVERY_MYSQL_DSN:?role target DSN}
+      REDIS_ADDR: ${RECOVERY_REDIS_ADDR:?role Redis identity}
+      REDIS_NAMESPACE: ${RECOVERY_REDIS_NAMESPACE:?role-stage namespace}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?required}
+      ADMIN_SESSION_SECRET: ${ADMIN_SESSION_SECRET:?required}
+      DOWNLOAD_TOKEN_SECRET: ${DOWNLOAD_TOKEN_SECRET:?required}
+      WECHAT_MINI_APP_ID: ${WECHAT_MINI_APP_ID:?required}
+      WECHAT_MINI_APP_SECRET: ${WECHAT_MINI_APP_SECRET:?required}
+      WEIBO_COOKIE: ${WEIBO_COOKIE:-}
+      XIGUA_COOKIE: ${XIGUA_COOKIE:-}
+      SOHU_API_KEY: ${SOHU_API_KEY:-}
+    ports: ["127.0.0.1:${RECOVERY_API_HOST_PORT:-5001}:5001"]
+    networks: ["data", "egress"]
+    mem_limit: 2g
+    cpus: 2.0
+    volumes:
+      - "parser-ipc-recovery:/run/watermark-parser"
+      - "gate-receipt-recovery:/run/watermark-gate:ro"
+      - "app-cache-recovery:/app/cache"
+      - "app-logs-recovery:/app/logs"
+    read_only: true
+    pids_limit: 256
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: ["/app/tmp:size=268435456,mode=0700,uid=10001,gid=10001,nodev,nosuid,noexec"]
+    healthcheck:
+      test: ["CMD", "/app/bin/watermark-go", "healthcheck", "api"]
+    depends_on:
+      data-gate-recovery: {condition: service_completed_successfully}
+
+  parser-helper-recovery:
+    profiles: ["recovery"]
+    image: ${RECOVERY_IMAGE:?same verified A registry digest}
+    command: ["/app/bin/parser-helper", "serve"]
+    environment:
+      DEPLOY_ROLE: recovery
+      PARSER_UDS: /run/watermark-parser/parser.sock
+    networks: ["parser-sandbox-recovery"]
+    volumes: ["parser-ipc-recovery:/run/watermark-parser"]
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: ["/app/tmp:size=134217728,mode=0700,uid=10001,gid=10001,nodev,nosuid,noexec"]
+    healthcheck:
+      test: ["CMD", "/app/bin/parser-helper", "healthcheck"]
+
+  egress-proxy-recovery:
+    profiles: ["recovery"]
+    image: ${RECOVERY_IMAGE:?same verified A registry digest}
+    command: ["/app/bin/netguard-proxy", "serve"]
+    environment:
+      DEPLOY_ROLE: recovery
+      PARSER_UDS: /run/watermark-parser/parser.sock
+    networks: ["egress", "parser-sandbox-recovery"]
+    volumes: ["parser-ipc-recovery:/run/watermark-parser"]
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD", "/app/bin/netguard-proxy", "healthcheck"]
+
+  data-gate-candidate:
+    profiles: ["candidate"]
+    image: ${CANDIDATE_IMAGE:?same verified B registry digest}
+    command: ["/app/bin/watermark-go", "data-gate"]
+    environment:
+      DEPLOY_ROLE: candidate
+      DEPLOY_STAGE: ${CANDIDATE_DATA_STAGE:?shadow or final}
+      EXPECTED_IMAGE_DIGEST: ${CANDIDATE_IMAGE:?same verified B registry digest}
+      DEPLOYMENT_RUN_ID: ${DEPLOYMENT_RUN_ID:?current run}
+      GATE_ATTEMPT_ID: ${CANDIDATE_GATE_ATTEMPT_ID:?current gate attempt}
+      GATE_MODE: ${CANDIDATE_GATE_MODE:?apply or revalidate}
+      MIGRATION_SOURCE_DSN: ${CANDIDATE_MIGRATION_SOURCE_DSN:?clone DSN}
+      MYSQL_DSN: ${CANDIDATE_MIGRATION_TARGET_DSN:?least-privilege migrator DSN}
+      REDIS_NAMESPACE: ${CANDIDATE_REDIS_NAMESPACE:?role-stage namespace}
+    networks: ["data"]
+    volumes: ["gate-receipt-candidate:/run/watermark-gate"]
+    read_only: true
+    restart: "no"
+    healthcheck: {disable: true}
+
+  api-candidate:
+    profiles: ["candidate"]
+    image: ${CANDIDATE_IMAGE:?same verified B registry digest}
+    command: ["/app/bin/watermark-go", "serve"]
+    environment:
+      APP_ENV: production
+      PORT: "5001"
+      DEPLOY_ROLE: candidate
+      DEPLOY_STAGE: ${CANDIDATE_DATA_STAGE:?shadow or final}
+      EXPECTED_IMAGE_DIGEST: ${CANDIDATE_IMAGE:?same verified B registry digest}
+      DEPLOYMENT_RUN_ID: ${DEPLOYMENT_RUN_ID:?current run}
+      MYSQL_DSN: ${CANDIDATE_MYSQL_DSN:?role target DSN}
+      REDIS_ADDR: ${CANDIDATE_REDIS_ADDR:?role Redis identity}
+      REDIS_NAMESPACE: ${CANDIDATE_REDIS_NAMESPACE:?role-stage namespace}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?required}
+      ADMIN_SESSION_SECRET: ${ADMIN_SESSION_SECRET:?required}
+      DOWNLOAD_TOKEN_SECRET: ${DOWNLOAD_TOKEN_SECRET:?required}
+      WECHAT_MINI_APP_ID: ${WECHAT_MINI_APP_ID:?required}
+      WECHAT_MINI_APP_SECRET: ${WECHAT_MINI_APP_SECRET:?required}
+      WEIBO_COOKIE: ${WEIBO_COOKIE:-}
+      XIGUA_COOKIE: ${XIGUA_COOKIE:-}
+      SOHU_API_KEY: ${SOHU_API_KEY:-}
+    ports: ["127.0.0.1:${CANDIDATE_API_HOST_PORT:-5002}:5001"]
+    networks: ["data", "egress"]
+    mem_limit: 2g
+    cpus: 2.0
+    volumes:
+      - "parser-ipc-candidate:/run/watermark-parser"
+      - "gate-receipt-candidate:/run/watermark-gate:ro"
+      - "app-cache-candidate:/app/cache"
+      - "app-logs-candidate:/app/logs"
+    read_only: true
+    pids_limit: 256
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: ["/app/tmp:size=268435456,mode=0700,uid=10001,gid=10001,nodev,nosuid,noexec"]
+    healthcheck:
+      test: ["CMD", "/app/bin/watermark-go", "healthcheck", "api"]
+    depends_on:
+      data-gate-candidate: {condition: service_completed_successfully}
+
+  parser-helper-candidate:
+    profiles: ["candidate"]
+    image: ${CANDIDATE_IMAGE:?same verified B registry digest}
+    command: ["/app/bin/parser-helper", "serve"]
+    environment:
+      DEPLOY_ROLE: candidate
+      PARSER_UDS: /run/watermark-parser/parser.sock
+    networks: ["parser-sandbox-candidate"]
+    volumes: ["parser-ipc-candidate:/run/watermark-parser"]
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: ["/app/tmp:size=134217728,mode=0700,uid=10001,gid=10001,nodev,nosuid,noexec"]
+    healthcheck:
+      test: ["CMD", "/app/bin/parser-helper", "healthcheck"]
+
+  egress-proxy-candidate:
+    profiles: ["candidate"]
+    image: ${CANDIDATE_IMAGE:?same verified B registry digest}
+    command: ["/app/bin/netguard-proxy", "serve"]
+    environment:
+      DEPLOY_ROLE: candidate
+      PARSER_UDS: /run/watermark-parser/parser.sock
+    networks: ["egress", "parser-sandbox-candidate"]
+    volumes: ["parser-ipc-candidate:/run/watermark-parser"]
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD", "/app/bin/netguard-proxy", "healthcheck"]
+
+  source-mariadb-dump:
+    profiles: ["migration-tools"]
+    image: ${MARIADB_RECOVERY_IMAGE:?set pinned recovery-tool digest}
+    entrypoint: ["/usr/local/bin/source-dump"]
+    command: []
+    network_mode: "none"
+    read_only: true
+    restart: "no"
+    volumes:
+      - type: bind
+        source: /run/mysqld/mysqld.sock
+        target: /run/source/mariadb.sock
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${SOURCE_MARIADB_DEFAULTS_FILE:?0600 temporary file}
+        target: /run/secrets/source.cnf
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ./deploy/migration/source-dump.sh
+        target: /usr/local/bin/source-dump
+        read_only: true
+        bind: {create_host_path: false}
+      - "migration-backup:/backup"
+    healthcheck: {disable: true}
+
+  mariadb-clone:
+    profiles: ["migration-tools"]
+    image: ${MARIADB_RECOVERY_IMAGE:?same pinned recovery-tool digest}
+    environment:
+      MARIADB_DATABASE: watermark_source_clone
+      MARIADB_ROOT_PASSWORD: ${MARIADB_CLONE_ROOT_PASSWORD:?temporary clone secret}
+    networks: ["data"]
+    volumes:
+      - "mariadb-clone-data:/var/lib/mysql"
+    restart: "no"
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+
+  restore-mariadb-clone:
+    profiles: ["migration-tools"]
+    image: ${MARIADB_RECOVERY_IMAGE:?same pinned recovery-tool digest}
+    entrypoint: ["/usr/local/bin/restore-clone"]
+    command: []
+    networks: ["data"]
+    read_only: true
+    restart: "no"
+    volumes:
+      - "migration-backup:/backup:ro"
+      - type: bind
+        source: ${MARIADB_CLONE_DEFAULTS_FILE:?0600 temporary file}
+        target: /run/secrets/clone.cnf
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ./deploy/migration/restore-clone.sh
+        target: /usr/local/bin/restore-clone
+        read_only: true
+        bind: {create_host_path: false}
+    depends_on:
+      mariadb-clone: {condition: service_healthy}
+    healthcheck: {disable: true}
+
+  mysql:
+    image: ${MYSQL_IMAGE:?set pinned mysql registry digest}
+    environment:
+      MYSQL_DATABASE: watermark_control
+      MYSQL_USER: watermark
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?application DB secret}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?bootstrap/migrator secret}
+    networks: ["data"]
+    volumes:
+      - type: bind
+        source: /var/lib/watermark-go/data/mysql
+        target: /var/lib/mysql
+        bind: {create_host_path: false}
+    mem_limit: 1g
+    restart: "unless-stopped"
+
+  redis:
+    image: ${REDIS_IMAGE:?set pinned redis registry digest}
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec", "--save", "900", "1", "--protected-mode", "no"]
+    networks: ["data"]
+    volumes:
+      - type: bind
+        source: /var/lib/watermark-go/data/redis
+        target: /data
+        bind: {create_host_path: false}
+    mem_limit: 256m
+    restart: "unless-stopped"
+
+networks:
+  data:
+    internal: true
+  egress: {}
+  parser-sandbox-recovery:
+    internal: true
+  parser-sandbox-candidate:
+    internal: true
+
+volumes:
+  parser-ipc-recovery: {}
+  parser-ipc-candidate: {}
+  gate-receipt-recovery: {}
+  gate-receipt-candidate: {}
+  app-cache-recovery: {}
+  app-cache-candidate: {}
+  app-logs-recovery: {}
+  app-logs-candidate: {}
+  migration-backup: {}
+  mariadb-clone-data: {}

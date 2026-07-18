@@ -1,0 +1,67 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-07-18T00:00:00Z",
+  "images": {
+    "builder": {
+      "tag": "golang:1.26.5-bookworm",
+      "digest": "sha256:1ecb7edf62a0408027bd5729dfd6b1b8766e578e8df93995b225dfd0944eb651"
+    },
+    "runtime": {
+      "tag": "python:3.12.11-slim-bookworm",
+      "digest": "sha256:519591d6871b7bc437060736b9f7456b8731f1499a57e22e6c285135ae657bf7"
+    },
+    "mysql": {
+      "tag": "mysql:8.4.5",
+      "digest": "sha256:679e7e924f38a3cbb62a3d7df32924b83f7321a602d3f9f967c01b3df18495d6"
+    },
+    "redis": {
+      "tag": "redis:7.4.4-alpine",
+      "digest": "sha256:ee9e8748ace004102a267f7b8265dab2c618317df22507b89d16a8add7154273"
+    },
+    "mariadbRecovery": {
+      "tag": "mariadb:11.8.2",
+      "digest": "sha256:2bcbaec92bd9d4f6591bc8103d3a8e6d0512ee2235506e47a2e129d190444405"
+    }
+  },
+  "tools": {
+    "yt-dlp": {
+      "version": "2026.7.4",
+      "sha256": "sha256:f11f2b11d5a8ac4059f9bdf29fa4407dc7c6bb00c5097e95ca22a7a9db518266"
+    },
+    "videodl": {
+      "commit": "28c566ed55953ef201956ea30c3274ccfab18c84",
+      "sha256": "sha256:b3f0761970d307b210859b6b9a3b530d7b93543479ad300d7ed6fd6a68dc0efa",
+      "archive": "https://github.com/CharlesPikachu/videodl/archive/28c566ed55953ef201956ea30c3274ccfab18c84.tar.gz"
+    },
+    "musicdl": {
+      "commit": "bd74f2528a0e37854f42ee6dcce344c153229a6e",
+      "sha256": "sha256:17268accc270cd2ca7cd4150469078e89dc288bf71d9ccd3fa3555f093ec1e84",
+      "archive": "https://github.com/CharlesPikachu/musicdl/archive/bd74f2528a0e37854f42ee6dcce344c153229a6e.tar.gz"
+    },
+    "ffmpeg": {
+      "version": "7:5.1.9-0+deb12u1",
+      "sha256": "sha256:2ba8ead87657c123ce6de2de5ecdbc1fb4ead9a4b317b85b8ec41e16c890fe01",
+      "snapshot": "https://snapshot.debian.org/archive/debian/20260718T000000Z",
+      "package": "pool/main/f/ffmpeg/ffmpeg_5.1.9-0+deb12u1_amd64.deb"
+    }
+  },
+  "pythonRequirements": [
+    {
+      "name": "yt-dlp",
+      "version": "2026.7.4",
+      "hashes": [
+        "sha256:f11f2b11d5a8ac4059f9bdf29fa4407dc7c6bb00c5097e95ca22a7a9db518266"
+      ]
+    }
+  ],
+  "reproducibility": {
+    "buildFlags": [
+      "-trimpath",
+      "-buildvcs=false",
+      "-ldflags=-s -w -buildid="
+    ],
+    "noCommitInBinary": true,
+    "noPythonBytecode": true,
+    "promotionMarkerExcluded": true
+  }
+}

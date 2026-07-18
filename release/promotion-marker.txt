@@ -1,0 +1,2 @@
+This marker is intentionally excluded from Docker build context.
+It may be changed to trigger B-side promotion without changing rootfs inputs.

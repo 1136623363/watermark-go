@@ -1930,7 +1930,7 @@ git commit -m "test: lock current mini program API behavior"
 - 创建：`scripts/verify-gitleaks.sh`
 - 创建：`internal/policy/docker_ci_test.go`
 
-- [ ] **步骤 1：编写 Docker/CI 策略失败测试**
+- [x] **步骤 1：编写 Docker/CI 策略失败测试**
 
 测试每个 tracked `.yml/.yaml`：只要顶层出现 `services` 就按 Compose 解析，唯一允许路径是
 `deploy/compose.yml`；拒绝锚点/merge 带入的 `build`、顶层 `include` 和 service `extends`。
@@ -1960,13 +1960,13 @@ volume/socket 或绕过 runtime inspect/receipt，任一都失败。
 下载必须安全跟随 GitHub HTTPS redirect，并锁定 HTTPS-only protocol/redirect、最大重定向、连接/总超时；
 302、超时、降级协议或 hash 不符都 fail closed。
 
-- [ ] **步骤 2：确认失败**
+- [x] **步骤 2：确认失败**
 
 运行：`go test ./internal/policy -run 'TestDocker|TestWorkflow|TestCompose' -count=1`
 
 预期：FAIL。
 
-- [ ] **步骤 3：实现 Dockerfile**
+- [x] **步骤 3：实现 Dockerfile**
 
 builder 的 `FROM` 同时包含 `golang:1.26.5` tag 与 `deploy/image-lock.json` 中经官方 manifest 校验的
 64 位 digest（首选工具链 `go1.26.5`）；runtime 同样用 lock 中的官方 Python 基础镜像 digest，并固定
@@ -1990,7 +1990,7 @@ Go 应用使用 `-trimpath -buildvcs=false` 且清空 buildid 的固定 flags �
 canonical rootfs inventory、app binary hash、tool versions 与 schema 为准，不把 OCI config label 当作
 rootfs 差异。
 
-- [ ] **步骤 4：实现单机 Compose**
+- [x] **步骤 4：实现单机 Compose**
 
 ```yaml
 services:
@@ -2365,7 +2365,7 @@ mount 只允许精确 `/var/lib/watermark-go/data/{mysql,redis}`，preflight 验
 目录或把整个 `/var/lib/watermark-go` 暴露给容器。
 环境示例文件使用可跟踪的 `deploy/env.example`；`.env*` 继续全局禁止跟踪。安全前置已删除旧根 Compose、旧 Nginx 配置和 mutable sync 脚本，Task 13 不得恢复它们。
 
-- [ ] **步骤 5：实现 Actions**
+- [x] **步骤 5：实现 Actions**
 
 push main 的 checkout 必须设置 `fetch-depth: 0` 和 `fetch-tags: true`，使 secret scan 覆盖所有
 heads/tags 可达历史、annotated tag message 与即将推送 refs。Gitleaks Action 固定为
@@ -2469,7 +2469,7 @@ else
 fi
 ```
 
-- [ ] **步骤 6：只做静态验证，禁止本地 build**
+- [x] **步骤 6：只做静态验证，禁止本地 build**
 
 运行：
 
@@ -2502,13 +2502,25 @@ scripts/verify-gitleaks.sh
 `build`、`include` 或 `extends` 都失败；仓库扫描与 Gitleaks 覆盖完整 refs/history，执行历史中没有
 `docker build` 或 `docker compose build`。
 
-- [ ] **步骤 7：Commit**
+- [x] **步骤 7：Commit**
 
 ```bash
 git add Dockerfile requirements.lock deploy .github scripts/verify-gitleaks.sh \
   internal/policy/docker_ci_test.go release/promotion-marker.txt .dockerignore
 git commit -m "ci: publish reproducible GHCR image without Jenkins"
 ```
+
+**完成证据（2026-07-18）：** 已以 TDD 增补 Docker/CI policy，红灯确认失败后实现可复现镜像输入锁定、
+无 Jenkins Actions、A/B 单机 Compose、migration-tools、固定 Gitleaks 全历史扫描脚本与 promotion marker
+排除。固定官方基础镜像 digest、Debian snapshot `20260718T000000Z` 的 `ffmpeg=7:5.1.9-0+deb12u1`、
+`yt-dlp==2026.7.4` wheel hash、`videodl` commit `28c566ed55953ef201956ea30c3274ccfab18c84`
+tarball hash 与 `musicdl` commit `bd74f2528a0e37854f42ee6dcce344c153229a6e` tarball hash。当前宿主机
+严格未执行 `docker build`、`docker compose build` 或 `buildx build`；仅执行
+`docker compose -f deploy/compose.yml config --quiet` 做静态渲染校验。验证通过：
+`go test ./internal/policy -count=1`、`GOMAXPROCS=2 go test ./... -count=1`、`go vet ./...`、
+`GOMAXPROCS=2 go test -race ./internal/httpapi ./internal/auth ./tests/contracts -count=1`、
+`python3 -m py_compile ...`、`scripts/verify-gitleaks.sh`、`git diff --check`，并确认旧 Compose/Jenkins/
+mutable sync 入口仍不存在。
 
 ## 任务 14：实现基准、部署、监控和回滚脚本
 

@@ -17,9 +17,8 @@
 *密码*
 *服务器配置*
 
-# Retired CI and worker deployment artifacts
-jenkinsfile
-Jenkinsfile
+# Retired pipeline and worker deployment artifacts
+[Jj]enkinsfile
 docker-compose.prod.worker.yml
 
 # Build outputs and local tooling
@@ -80,3 +79,6 @@ __pycache__
 /*.tgz
 /*.oci
 /*.oci.tar
+
+# Promotion marker must not affect rootfs reproducibility
+release/promotion-marker.txt
