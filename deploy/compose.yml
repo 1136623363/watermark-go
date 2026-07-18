@@ -132,7 +132,7 @@ services:
       WEIBO_COOKIE: ${WEIBO_COOKIE:-}
       XIGUA_COOKIE: ${XIGUA_COOKIE:-}
       SOHU_API_KEY: ${SOHU_API_KEY:-}
-    ports: ["127.0.0.1:${CANDIDATE_API_HOST_PORT:-5002}:5001"]
+    ports: ["127.0.0.1:${CANDIDATE_API_HOST_PORT:-15001}:5001"]
     networks: ["data", "egress"]
     mem_limit: 2g
     cpus: 2.0

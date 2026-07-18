@@ -2547,7 +2547,7 @@ Compose config 静态渲染、旧 Compose/Jenkins 文件缺失检查和去集群
 - 创建：`tests/ops/test_scripts.py`
 - 创建：`docs/runbook.md`
 
-- [ ] **步骤 1：编写报告门禁测试**
+- [x] **步骤 1：编写报告门禁测试**
 
 ```python
 def test_gate_recomputes_canonical_baseline(canonical_full_report):
@@ -2607,13 +2607,13 @@ success 和本轮唯一 `parserInvocationId`。三轮时间窗不重叠、runId/
 停机。持续换入换出、PSI/IO 压力、OOM 增量、inode/磁盘越线或 `MemAvailable` 低于安全线时，必须
 停止创建新基准/候选栈重任务且只操作 Compose project `watermark-go`，不得停止其他容器。
 
-- [ ] **步骤 2：确认失败**
+- [x] **步骤 2：确认失败**
 
 运行：`python3 -m pytest tests/baseline -q`
 
 预期：FAIL，runner/evaluator 尚不存在。
 
-- [ ] **步骤 3：实现基准和主机保护**
+- [x] **步骤 3：实现基准和主机保护**
 
 runner 输出 fixture hash、image digest、commit、代理、timeout、并发、每平台耗时/错误和总墙钟；
 强制 `enabled=completed=93`、`success>=62`、`durationMs<=216000`。
@@ -2624,7 +2624,7 @@ swap `si+so>0`、memory PSI `some avg10>10`、io PSI `full avg10>5`，均停止�
 MemAvailable/阈值、swap 已用量与 si/so、memory/io PSI、OOM、磁盘/inode、触发原因和采取的候选栈
 动作；只允许操作 project `watermark-go`，不停止、重启或修改其他容器。
 
-- [ ] **步骤 4：实现只拉取部署与回滚**
+- [x] **步骤 4：实现只拉取部署与回滚**
 
 部署脚本拒绝包含 `build:` 的 Compose，并先 discovery 决定状态机。通用顺序是：宿主机/运行 route
 权威快照 → MariaDB engine/capability/writer 发现 → 固定 recovery tool 的备份与隔离恢复 → 只 pull
@@ -2686,7 +2686,7 @@ RepoDigest verify、Compose config hash、runtime digest、数据面 identity、
 立即 fence 可疑 writer，并按状态协调：A bootstrap 恢复原 502，B cutover 执行已演练 B→A；reconcile
 写入当前 attempt 的终态且核对 route/data/running digest 前，不得开始新 attempt 或解除 trap。
 
-- [ ] **步骤 5：验证脚本**
+- [x] **步骤 5：验证脚本**
 
 运行：
 
@@ -2699,7 +2699,29 @@ git diff --check
 
 预期：全部 PASS。
 
-- [ ] **步骤 6：Commit**
+执行记录（2026-07-18）：
+
+- 已实现 `scripts/baseline/run.py` 对 canonical 93 enabled 样本、三轮 runId/record-set/invocation 独立性、原始
+  records duration/success/completed 与 half-open concurrency 的重算门禁。
+- 已实现 `scripts/verify-acceptance.py` 的 `--schema-of-present` / `--require-complete`，对 media parser
+  machine evidence、`final_full_no_binlog` migration、60 个 observation raw samples、baseline 三轮证据做
+  attempt/source/digest 绑定与反伪造重算；观察证据按原始样本重算 MemAvailable、swap 增量、OOM 增量、
+  memory/io PSI、disk/inode 停止线，静态累计 swap/OOM 不单独触发失败。
+- 已实现只拉取部署/回滚脚本、`watermark-go` Compose project 固定、runtime env `0600` preflight、
+  candidate shadow bind `127.0.0.1:15001`、data-gate `--force-recreate --no-deps` one-shot、atomic
+  evidence writer 与本地 promotion evidence/marker 生成。
+- 已验证：`PYTHONPATH=/tmp/watermark-task14-pytest python3 -m pytest tests/baseline tests/ops -q`，
+  20 passed。
+- 已验证：`python3 -m py_compile scripts/baseline/run.py scripts/verify-acceptance.py scripts/write-evidence.py`。
+- 已验证：`for path in scripts/*.sh; do bash -n "$path"; done`。
+- 已验证：`git diff --cached --check`。
+- 已验证：`GOMAXPROCS=2 go test ./... -count=1`、`go vet ./...`、`scripts/verify-gitleaks.sh`。
+- 已验证：`docker compose --env-file deploy/env.example -f deploy/compose.yml config --quiet`（静态渲染；
+  未 pull、未 up、未 build）。
+- 本机缺少 `shellcheck`，已记录为不可用；未安装系统包，未用容器替代运行。
+- 当前宿主机严格未执行 `docker build`、`docker compose build`、`docker buildx build`、镜像 load 或服务启动。
+
+- [x] **步骤 6：Commit**
 
 ```bash
 git add scripts tests/baseline tests/ops docs/runbook.md
