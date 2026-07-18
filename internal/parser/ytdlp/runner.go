@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
-	"net/url"
 	"path/filepath"
 	"strings"
 	"time"
@@ -133,24 +131,7 @@ func ValidateGuardProxy(proxy GuardProxy) (string, error) {
 	if !verified {
 		return "", errors.New("verified netguard proxy is required")
 	}
-	parsed, err := url.Parse(endpoint)
-	if err != nil || parsed == nil || parsed.Scheme != "http" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
-		return "", errors.New("invalid netguard proxy endpoint")
-	}
-	host := parsed.Hostname()
-	if host != "127.0.0.1" && host != "::1" {
-		return "", errors.New("netguard proxy must use a loopback endpoint")
-	}
-	if parsed.Path != "" && parsed.Path != "/" {
-		return "", errors.New("netguard proxy endpoint cannot contain a path")
-	}
-	if parsed.Port() == "" {
-		return "", errors.New("netguard proxy port is required")
-	}
-	if _, _, err := net.SplitHostPort(parsed.Host); err != nil {
-		return "", errors.New("invalid netguard proxy address")
-	}
-	return parsed.String(), nil
+	return netguard.VerifyLoopbackProxyEndpoint(endpoint)
 }
 
 func (runner *Runner) Command(rawURL string) (Command, error) {
@@ -163,11 +144,24 @@ func (runner *Runner) Command(rawURL string) (Command, error) {
 	return Command{
 		Path: runner.config.Binary,
 		Args: []string{
-			"--dump-single-json", "--no-warnings", "--no-playlist", "--skip-download",
+			"--ignore-config", "--dump-single-json", "--no-warnings", "--no-playlist", "--skip-download",
 			"--socket-timeout", "20", "--extractor-retries", "1", "--fragment-retries", "1",
 			"--proxy", runner.endpoint, "-f", FormatSelector, rawURL,
 		},
-		Env: []string{"LANG=C.UTF-8", "LC_ALL=C.UTF-8"}, Timeout: runner.config.Timeout,
+		Env: []string{
+			"LANG=C.UTF-8",
+			"LC_ALL=C.UTF-8",
+			"HOME=/tmp/netguard-empty-home",
+			"XDG_CONFIG_HOME=/tmp/netguard-empty-xdg",
+			"HTTP_PROXY=",
+			"http_proxy=",
+			"HTTPS_PROXY=",
+			"https_proxy=",
+			"ALL_PROXY=",
+			"all_proxy=",
+			"NO_PROXY=",
+			"no_proxy=",
+		}, Timeout: runner.config.Timeout,
 		TerminateProcessGroup: true,
 	}, nil
 }

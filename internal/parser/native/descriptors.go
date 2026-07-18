@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/1136623363/watermark-go/internal/netguard"
 	coreparser "github.com/1136623363/watermark-go/internal/parser"
 )
 
@@ -24,6 +25,7 @@ type nativeRegistration struct {
 	maxRequests  int
 	maxRedirects int
 	sessionHost  string
+	authorities  []netguard.AuthorityRule
 	bind         func(legacyHTTPClients) legacyParserBinding
 }
 
@@ -40,6 +42,14 @@ func bindShareAndID(parser interface {
 
 func (registration nativeRegistration) supportsID() bool {
 	return registration.bind != nil && registration.bind(legacyHTTPClients{}).id != nil
+}
+
+func metadataAuthorities(hosts ...string) []netguard.AuthorityRule {
+	rules := make([]netguard.AuthorityRule, 0, len(hosts))
+	for _, host := range hosts {
+		rules = append(rules, netguard.AuthorityRule{Purpose: netguard.PurposeMetadataAPI, Host: host})
+	}
+	return rules
 }
 
 // nativeRegistrations is the sole authority for native routing, metadata and
@@ -98,6 +108,7 @@ var nativeRegistrations = []nativeRegistration{
 		hostRules:    []coreparser.HostRule{{Host: "h5.pipix.com", IncludeSubdomains: true}},
 		capabilities: coreparser.CapabilityVideo | coreparser.CapabilityGallery,
 		queryKeys:    []string{"id"}, maxRequests: 4, maxRedirects: 3,
+		authorities: metadataAuthorities("api.pipix.com"),
 		bind: func(clients legacyHTTPClients) legacyParserBinding {
 			return bindShareAndID(piPiXia{legacyHTTPClients: clients})
 		},
@@ -134,6 +145,7 @@ var nativeRegistrations = []nativeRegistration{
 		hostRules:    []coreparser.HostRule{{Host: "h5.pipigx.com", IncludeSubdomains: true}},
 		capabilities: coreparser.CapabilityVideo,
 		queryKeys:    []string{"pid"}, maxRequests: 4, maxRedirects: 3,
+		authorities: metadataAuthorities("share.ippzone.com"),
 		bind: func(clients legacyHTTPClients) legacyParserBinding {
 			return bindShareAndID(piPiGaoXiao{legacyHTTPClients: clients})
 		},
@@ -159,6 +171,7 @@ var nativeRegistrations = []nativeRegistration{
 		},
 		capabilities: coreparser.CapabilityVideo,
 		queryKeys:    []string{"vid"}, maxRequests: 4, maxRedirects: 3,
+		authorities: metadataAuthorities("liveapi.huya.com"),
 		bind: func(clients legacyHTTPClients) legacyParserBinding {
 			return bindShareAndID(huYa{legacyHTTPClients: clients})
 		},
@@ -267,6 +280,7 @@ var nativeRegistrations = []nativeRegistration{
 		},
 		capabilities: coreparser.CapabilityVideo,
 		queryKeys:    []string{"bvid", "p"}, maxRequests: 4, maxRedirects: 3,
+		authorities: metadataAuthorities("api.bilibili.com"),
 		bind: func(clients legacyHTTPClients) legacyParserBinding {
 			return bindShare(biliBili{legacyHTTPClients: clients})
 		},
@@ -280,6 +294,7 @@ var nativeRegistrations = []nativeRegistration{
 		},
 		capabilities: coreparser.CapabilityVideo | coreparser.CapabilityGallery,
 		queryKeys:    []string{"s", "t"}, maxRequests: 4, maxRedirects: 3,
+		authorities: metadataAuthorities("cdn.syndication.twimg.com"),
 		bind: func(clients legacyHTTPClients) legacyParserBinding {
 			return bindShareAndID(twitter{legacyHTTPClients: clients})
 		},
@@ -289,6 +304,7 @@ var nativeRegistrations = []nativeRegistration{
 		hostRules:    []coreparser.HostRule{{Host: "v.qq.com", IncludeSubdomains: true}},
 		capabilities: coreparser.CapabilityVideo,
 		queryKeys:    []string{"v", "vid"}, maxRequests: 4, maxRedirects: 3,
+		authorities: metadataAuthorities("vv.video.qq.com"),
 		bind: func(clients legacyHTTPClients) legacyParserBinding {
 			return bindShareAndID(qqVideo{legacyHTTPClients: clients})
 		},
@@ -314,6 +330,7 @@ var nativeRegistrations = []nativeRegistration{
 		},
 		capabilities: coreparser.CapabilityVideo,
 		queryKeys:    []string{"pid"}, maxRequests: 4, maxRedirects: 3,
+		authorities: metadataAuthorities("vdn.apps.cntv.cn"),
 		bind: func(clients legacyHTTPClients) legacyParserBinding {
 			return bindShareAndID(cctvVideo{legacyHTTPClients: clients})
 		},
@@ -335,6 +352,12 @@ func descriptorsFromRegistrations(registrations []nativeRegistration) []corepars
 			QueryKeys:  append([]string(nil), registration.queryKeys...),
 			SupportsID: registration.supportsID(), MaxRequests: registration.maxRequests,
 			MaxRedirects: registration.maxRedirects, SessionHost: registration.sessionHost,
+			AuthorityRules: append([]netguard.AuthorityRule(nil), registration.authorities...),
+		}
+		if registration.sessionHost != "" {
+			descriptor.AuthorityRules = append(descriptor.AuthorityRules, netguard.AuthorityRule{
+				Purpose: netguard.PurposeSessionConsumer, Host: registration.sessionHost, AllowSensitiveHeaders: true,
+			})
 		}
 		key := descriptor.Key
 		capabilities := descriptor.Capabilities

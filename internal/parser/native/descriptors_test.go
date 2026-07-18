@@ -149,6 +149,73 @@ func TestNativeHostRulesPreserveFixedCommitControlledSubdomains(t *testing.T) {
 	}
 }
 
+func TestEveryNativeFixedEndpointHasPolicyOwner(t *testing.T) {
+	t.Parallel()
+	descriptors := Descriptors()
+	owners := make([]netguard.AuthorityOwner, 0, len(descriptors))
+	for _, descriptor := range descriptors {
+		rules := make([]netguard.AuthorityRule, 0, len(descriptor.HostRules)+len(descriptor.AuthorityRules))
+		for _, rule := range descriptor.HostRules {
+			rules = append(rules, netguard.AuthorityRule{
+				Purpose: netguard.PurposeInputShare, Host: rule.Host, IncludeSubdomains: rule.IncludeSubdomains,
+			})
+		}
+		rules = append(rules, descriptor.AuthorityRules...)
+		owners = append(owners, netguard.AuthorityOwner{Owner: string(descriptor.Key), Rules: rules})
+	}
+	registry, err := netguard.NewAuthorityRegistry(owners)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		owner   string
+		host    string
+		purpose netguard.AuthorityPurpose
+	}{
+		{owner: SourceBiliBili, host: "api.bilibili.com", purpose: netguard.PurposeMetadataAPI},
+		{owner: SourceSohu, host: SohuSessionHost, purpose: netguard.PurposeSessionConsumer},
+		{owner: SourceTwitter, host: "cdn.syndication.twimg.com", purpose: netguard.PurposeMetadataAPI},
+		{owner: SourceQQVideo, host: "vv.video.qq.com", purpose: netguard.PurposeMetadataAPI},
+		{owner: SourceCCTV, host: "vdn.apps.cntv.cn", purpose: netguard.PurposeMetadataAPI},
+		{owner: SourcePiPiXia, host: "api.pipix.com", purpose: netguard.PurposeMetadataAPI},
+		{owner: SourceHuYa, host: "liveapi.huya.com", purpose: netguard.PurposeMetadataAPI},
+		{owner: SourcePiPiGaoXiao, host: "share.ippzone.com", purpose: netguard.PurposeMetadataAPI},
+	} {
+		t.Run(test.owner+"/"+test.host, func(t *testing.T) {
+			target, err := netguard.NewFetchURL("https://" + test.host + "/synthetic")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := registry.Authorize(netguard.AuthorityRequest{
+				Owner: test.owner, Purpose: test.purpose, URL: target,
+			}); err != nil {
+				t.Fatalf("fixed endpoint owner missing: %v", err)
+			}
+			if _, err := registry.Authorize(netguard.AuthorityRequest{
+				Owner: SourceDouYin, Purpose: test.purpose, URL: target,
+			}); !errors.Is(err, netguard.ErrAuthorityDenied) {
+				t.Fatalf("fixed endpoint accepted wrong owner: %v", err)
+			}
+		})
+	}
+}
+
+func TestParserAPIAuthorityCannotBeUsedAsInputRoute(t *testing.T) {
+	t.Parallel()
+	registry, err := coreparser.NewRegistry(Descriptors())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, raw := range []string{
+		"https://api.bilibili.com/x/web-interface/view?bvid=BV1synthetic",
+		"https://api.tv.sohu.com/v4/video/info/1.json?api_key=query-sentinel",
+	} {
+		if descriptor, err := registry.ResolveURL(raw); err == nil {
+			t.Fatalf("fixed API authority %q resolved as input share for %q", raw, descriptor.Key)
+		}
+	}
+}
+
 func TestEveryNativeParserConstructionPerformsNoIO(t *testing.T) {
 	t.Parallel()
 	factory := &countingClientFactory{}

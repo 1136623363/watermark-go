@@ -3,7 +3,6 @@ package runtimecfg
 import (
 	"encoding/json"
 	"errors"
-	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -11,8 +10,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/go-resty/resty/v2"
 )
 
 type Settings struct {
@@ -281,56 +278,13 @@ func UniversalParser() UniversalParserConfig {
 	}
 }
 
-func ProxyFunc(req *http.Request) (*url.URL, error) {
-	if req == nil || req.URL == nil || !ShouldUseProxyForTarget(req.URL.String()) {
-		return nil, nil
-	}
-	proxyRaw := strings.TrimSpace(Current().OutboundProxy)
-	if proxyRaw == "" {
-		return nil, nil
-	}
-	return url.Parse(proxyRaw)
-}
-
-func NewHTTPTransport() *http.Transport {
-	base, ok := http.DefaultTransport.(*http.Transport)
-	if !ok || base == nil {
-		return &http.Transport{Proxy: ProxyFunc}
-	}
-	clone := base.Clone()
-	clone.Proxy = ProxyFunc
-	return clone
-}
-
-func NewHTTPClient() *http.Client {
-	return &http.Client{
-		Transport: NewHTTPTransport(),
-		Timeout:   HTTPTimeout(),
-	}
-}
-
-func NewRestyClient() *resty.Client {
-	client := resty.New()
-	client.SetTransport(NewHTTPTransport())
-	client.SetTimeout(HTTPTimeout())
-	return client
-}
-
-func ApplyGlobalHTTPSettings() {
-	http.DefaultTransport = NewHTTPTransport()
-	http.DefaultClient = &http.Client{
-		Transport: http.DefaultTransport,
-		Timeout:   HTTPTimeout(),
-	}
-}
-
 func defaults() Settings {
 	wd, _ := os.Getwd()
 	toolsRoot := firstNonEmpty(os.Getenv("TOOL_UPDATES_ROOT"), filepath.Join(wd, "tools"))
 	thirdPartyRoot := filepath.Join(wd, "third_party", "CharlesPikachu")
 	return Settings{
 		RateLimitEnabled:              envBool("RATE_LIMIT_ENABLED", false),
-		OutboundProxy:                 firstNonEmpty(os.Getenv("OUTBOUND_PROXY"), os.Getenv("HTTPS_PROXY"), os.Getenv("HTTP_PROXY")),
+		OutboundProxy:                 strings.TrimSpace(os.Getenv("OUTBOUND_PROXY")),
 		HTTPTimeoutSeconds:            30,
 		YTDLPTimeoutSeconds:           60,
 		YTDLPBinary:                   strings.TrimSpace(os.Getenv("YT_DLP_BINARY")),
@@ -477,12 +431,15 @@ func normalizeAndValidate(settings *Settings) error {
 			return errors.New("proxy url is invalid")
 		}
 		switch strings.ToLower(proxyURL.Scheme) {
-		case "http", "https", "socks5", "socks5h":
+		case "http", "https", "socks5":
 		default:
-			return errors.New("proxy scheme must be http/https/socks5/socks5h")
+			return errors.New("proxy scheme must be http/https/socks5")
 		}
 		if proxyURL.Host == "" {
 			return errors.New("proxy host is empty")
+		}
+		if proxyURL.User != nil {
+			return errors.New("proxy credentials are not allowed")
 		}
 	}
 
@@ -526,6 +483,11 @@ func normalizeAndValidate(settings *Settings) error {
 	}
 	if settings.UniversalParserMusicDLConfigJSON != "" && !json.Valid([]byte(settings.UniversalParserMusicDLConfigJSON)) {
 		return errors.New("musicdl config json is invalid")
+	}
+	if settings.UniversalParserMusicDLConfigJSON != "" {
+		if err := validateMusicDLNetworkConfig(settings.UniversalParserMusicDLConfigJSON); err != nil {
+			return err
+		}
 	}
 	if settings.ToolUpdatesRoot == "" {
 		settings.ToolUpdatesRoot = defaults().ToolUpdatesRoot
@@ -577,6 +539,59 @@ func normalizeAndValidate(settings *Settings) error {
 		return err
 	}
 	return nil
+}
+
+func validateMusicDLNetworkConfig(raw string) error {
+	var decoded any
+	if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
+		return errors.New("musicdl config json is invalid")
+	}
+	if musicDLConfigContainsUnsafeNetworkOverride(decoded) {
+		return errors.New("unsafe musicdl config")
+	}
+	return nil
+}
+
+func musicDLConfigContainsUnsafeNetworkOverride(value any) bool {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, child := range typed {
+			if unsafeMusicDLNetworkConfigKey(key) || musicDLConfigContainsUnsafeNetworkOverride(child) {
+				return true
+			}
+		}
+	case []any:
+		for _, child := range typed {
+			if musicDLConfigContainsUnsafeNetworkOverride(child) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func unsafeMusicDLNetworkConfigKey(key string) bool {
+	normalized := strings.Map(func(r rune) rune {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
+			return r
+		}
+		if r >= 'A' && r <= 'Z' {
+			return r + ('a' - 'A')
+		}
+		return -1
+	}, key)
+	if strings.Contains(normalized, "request") && strings.Contains(normalized, "override") {
+		return true
+	}
+	switch normalized {
+	case "proxy", "proxies", "httpproxy", "httpsproxy", "allproxy", "noproxy",
+		"header", "headers", "cookie", "cookies", "authorization", "origin",
+		"referer", "session", "verify", "stream", "redirect", "redirects",
+		"allowredirect", "allowredirects":
+		return true
+	default:
+		return false
+	}
 }
 
 func validateOptionalPublicBaseURL(rawURL, label string) error {

@@ -2,8 +2,6 @@ package server
 
 import (
 	"context"
-	"encoding/json"
-	"net/http"
 	"os"
 	"runtime"
 	"strings"
@@ -172,93 +170,15 @@ func configuredClusterWorkers() []clusterWorkerEndpoint {
 }
 
 func probeClusterWorker(ctx context.Context, worker clusterWorkerEndpoint) clusterNodeStatus {
-	timeout := time.Duration(runtimecfg.Current().ClusterHealthTimeoutSeconds) * time.Second
-	if timeout <= 0 {
-		timeout = 2 * time.Second
-	}
-	probeCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	started := time.Now()
-	req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, worker.URL+"/api/health", nil)
-	if err != nil {
-		return clusterNodeStatus{
-			clusterNodeInfo: clusterNodeInfo{ID: worker.Name, Name: worker.Name, Role: "worker"},
-			ConfigID:        worker.Name,
-			Endpoint:        worker.URL,
-			Enabled:         true,
-			Status:          "invalid",
-			Error:           err.Error(),
-		}
-	}
-
-	client := &http.Client{Timeout: timeout + time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return clusterNodeStatus{
-			clusterNodeInfo: clusterNodeInfo{ID: worker.Name, Name: worker.Name, Role: "worker"},
-			ConfigID:        worker.Name,
-			Endpoint:        worker.URL,
-			Enabled:         true,
-			Status:          "error",
-			Error:           err.Error(),
-			LatencyMS:       time.Since(started).Milliseconds(),
-		}
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return clusterNodeStatus{
-			clusterNodeInfo: clusterNodeInfo{ID: worker.Name, Name: worker.Name, Role: "worker"},
-			ConfigID:        worker.Name,
-			Endpoint:        worker.URL,
-			Enabled:         true,
-			Status:          "http_error",
-			Error:           resp.Status,
-			LatencyMS:       time.Since(started).Milliseconds(),
-		}
-	}
-
-	var payload struct {
-		Code int    `json:"code"`
-		Msg  string `json:"msg"`
-		Data struct {
-			Node           clusterNodeInfo      `json:"node"`
-			Infrastructure infrastructureStatus `json:"infrastructure"`
-		} `json:"data"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return clusterNodeStatus{
-			clusterNodeInfo: clusterNodeInfo{ID: worker.Name, Name: worker.Name, Role: "worker"},
-			ConfigID:        worker.Name,
-			Endpoint:        worker.URL,
-			Enabled:         true,
-			Status:          "decode_error",
-			Error:           err.Error(),
-			LatencyMS:       time.Since(started).Milliseconds(),
-		}
-	}
-
-	node := payload.Data.Node
-	if strings.TrimSpace(node.ID) == "" {
-		node.ID = worker.Name
-	}
-	if strings.TrimSpace(node.Name) == "" {
-		node.Name = worker.Name
-	}
-	if strings.TrimSpace(node.Role) == "" {
-		node.Role = "worker"
-	}
-
+	_ = ctx
 	return clusterNodeStatus{
-		clusterNodeInfo: node,
+		clusterNodeInfo: clusterNodeInfo{ID: worker.Name, Name: worker.Name, Role: "worker"},
 		ConfigID:        worker.Name,
 		Endpoint:        worker.URL,
-		Enabled:         true,
-		Healthy:         payload.Code == 0,
-		Status:          firstNonEmpty(payload.Msg, "ok"),
-		LatencyMS:       time.Since(started).Milliseconds(),
-		Infrastructure:  payload.Data.Infrastructure,
+		Enabled:         false,
+		Disabled:        true,
+		Status:          "disabled",
+		Error:           "cluster worker health probes are disabled in single-node mode",
 	}
 }
 

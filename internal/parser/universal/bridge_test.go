@@ -3,7 +3,10 @@ package universal
 import (
 	"context"
 	"errors"
+	"os/exec"
+	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -98,9 +101,13 @@ func TestPythonBridgeUsesMinimalEnvironmentProxyAndStructuredOutput(t *testing.T
 		"BRIDGE_WORK_DIR=/app/cache/universal",
 		"MUSICDL_ITEM_LIMIT=3",
 		"HTTP_PROXY=http://127.0.0.1:18080",
+		"http_proxy=http://127.0.0.1:18080",
 		"HTTPS_PROXY=http://127.0.0.1:18080",
+		"https_proxy=http://127.0.0.1:18080",
 		"ALL_PROXY=http://127.0.0.1:18080",
+		"all_proxy=http://127.0.0.1:18080",
 		"NO_PROXY=",
+		"no_proxy=",
 	}
 	if !reflect.DeepEqual(executor.command.Env, wantEnv) {
 		t.Fatalf("child environment = %#v", executor.command.Env)
@@ -218,5 +225,51 @@ func TestPythonBridgeRejectsAbsolutePathOutsideVerifiedImageAllowlist(t *testing
 	config.Paths = nil
 	if _, err := NewPythonBridge(config); err == nil {
 		t.Fatal("bridge accepted a missing image path policy")
+	}
+}
+
+func TestPythonBridgeScriptRejectsUnsafeGuardProxyEndpoints(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 is unavailable")
+	}
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("cannot locate bridge test file")
+	}
+	bridgeScript := filepath.Clean(filepath.Join(filepath.Dir(filename), "..", "..", "..", "bridges", "universal", "python", "bridge.py"))
+	python := `
+import importlib.util
+import sys
+
+spec = importlib.util.spec_from_file_location("watermark_python_bridge_policy", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+
+accepted = module.parse_cli_args(["bridge.py", "video", "--guard-proxy", "http://127.0.0.1:18080/"])
+if accepted != ("video", "http://127.0.0.1:18080"):
+    raise AssertionError(accepted)
+
+for endpoint in (
+    "https://127.0.0.1:18080",
+    "http://localhost:18080",
+    "http://192.168.1.8:18080",
+    "http://user:pass@127.0.0.1:18080",
+    "http://127.0.0.1",
+    "http://127.0.0.1:18080/path",
+    "http://127.0.0.1:18080?target=http://evil.example",
+    "http://127.0.0.1:18080#fragment",
+):
+    try:
+        module.parse_cli_args(["bridge.py", "video", "--guard-proxy", endpoint])
+    except ValueError:
+        continue
+    raise AssertionError(f"accepted unsafe guard proxy endpoint {endpoint!r}")
+`
+	command := exec.Command("python3", "-c", python, bridgeScript)
+	command.Env = []string{"PYTHONDONTWRITEBYTECODE=1"}
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("python bridge accepted an unsafe guard proxy endpoint: %v\n%s", err, output)
 	}
 }

@@ -25,6 +25,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/1136623363/watermark-go/internal/netguard"
 	"github.com/1136623363/watermark-go/internal/runtimecfg"
 )
 
@@ -435,53 +436,7 @@ func handleInternalDownloadFallbackProxy(c *gin.Context) {
 }
 
 func proxyDownloadFallbackToNode(c *gin.Context, node, targetPath string) {
-	endpoint, ok := downloadFallbackNodeEndpoint(node)
-	if !ok {
-		c.JSON(http.StatusOK, httpResponse{Code: 1004, Msg: "fallback node not found"})
-		return
-	}
-	targetURL := strings.TrimRight(endpoint, "/") + targetPath
-	ctx, cancel := context.WithTimeout(c.Request.Context(), downloadFallbackProxyTimeout())
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
-	if err != nil {
-		c.JSON(http.StatusOK, httpResponse{Code: 1004, Msg: "invalid fallback node request"})
-		return
-	}
-	req.Host = c.Request.Host
-	if proto := strings.TrimSpace(c.GetHeader("X-Forwarded-Proto")); proto != "" {
-		req.Header.Set("X-Forwarded-Proto", proto)
-	} else if c.Request.TLS != nil {
-		req.Header.Set("X-Forwarded-Proto", "https")
-	} else {
-		req.Header.Set("X-Forwarded-Proto", "http")
-	}
-	if token := strings.TrimSpace(os.Getenv("CLUSTER_INTERNAL_TOKEN")); token != "" {
-		req.Header.Set("X-Cluster-Token", token)
-	}
-	for _, key := range []string{"Range", "Accept", "Accept-Language", "User-Agent"} {
-		if value := strings.TrimSpace(c.GetHeader(key)); value != "" {
-			req.Header.Set(key, value)
-		}
-	}
-
-	resp, err := downloadFallbackProxyHTTPClient().Do(req)
-	if err != nil {
-		c.JSON(http.StatusOK, httpResponse{Code: 1001, Msg: "fallback node unavailable: " + err.Error()})
-		return
-	}
-	defer resp.Body.Close()
-
-	for key, values := range resp.Header {
-		if strings.EqualFold(key, "Connection") || strings.EqualFold(key, "Transfer-Encoding") {
-			continue
-		}
-		for _, value := range values {
-			c.Writer.Header().Add(key, value)
-		}
-	}
-	c.Status(resp.StatusCode)
-	_, _ = io.Copy(c.Writer, resp.Body)
+	c.JSON(http.StatusNotFound, httpResponse{Code: 1004, Msg: "cluster download fallback is disabled"})
 }
 
 func proxyRemoteDownload(c *gin.Context, req downloadFallbackRequest) {
@@ -579,7 +534,23 @@ func doDownloadFallbackOriginRequest(ctx context.Context, sourceURL, mediaURL, m
 				req.Header.Set(key, value)
 			}
 		}
-		resp, err := downloadFallbackHTTPClient().Do(req)
+		resp, err := doGuardedDownloadFallbackRequest(ctx, req, 4, func(req *http.Request, via []*http.Request) error {
+			if len(via) > 0 {
+				previous := via[len(via)-1]
+				for _, key := range []string{"User-Agent", "Accept", "Accept-Language", "Accept-Encoding", "Cache-Control", "Pragma", "Range", "Referer", "Origin", "Sec-Fetch-Dest", "Sec-Fetch-Mode", "Sec-Fetch-Site"} {
+					if value := strings.TrimSpace(previous.Header.Get(key)); value != "" {
+						req.Header.Set(key, value)
+					}
+				}
+			}
+			if req.Header.Get("User-Agent") == "" {
+				req.Header.Set("User-Agent", downloadFallbackUserAgent())
+			}
+			if req.Header.Get("Accept") == "" {
+				req.Header.Set("Accept", "*/*")
+			}
+			return nil
+		})
 		if err != nil {
 			lastErr = err
 			continue
@@ -1491,41 +1462,15 @@ func parseDownloadFallbackProxyTicket(raw string) (downloadFallbackProxyTicket, 
 	return payload, true
 }
 
-func downloadFallbackHTTPClient() *http.Client {
-	return &http.Client{
-		Transport: runtimecfg.NewHTTPTransport(),
-		Timeout:   0,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= 5 {
-				return errors.New("too many redirects")
-			}
-			if err := validateRemoteTarget(req.URL.String()); err != nil {
-				return err
-			}
-			if len(via) > 0 {
-				previous := via[len(via)-1]
-				for _, key := range []string{"User-Agent", "Accept", "Accept-Language", "Accept-Encoding", "Cache-Control", "Pragma", "Range", "Referer", "Origin", "Sec-Fetch-Dest", "Sec-Fetch-Mode", "Sec-Fetch-Site"} {
-					if value := strings.TrimSpace(previous.Header.Get(key)); value != "" {
-						req.Header.Set(key, value)
-					}
-				}
-			}
-			if req.Header.Get("User-Agent") == "" {
-				req.Header.Set("User-Agent", downloadFallbackUserAgent())
-			}
-			if req.Header.Get("Accept") == "" {
-				req.Header.Set("Accept", "*/*")
-			}
-			return nil
-		},
+func doGuardedDownloadFallbackRequest(ctx context.Context, req *http.Request, maxRedirects int, afterValidation func(*http.Request, []*http.Request) error) (*http.Response, error) {
+	if ctx == nil || req == nil || req.URL == nil {
+		return nil, errors.New("invalid fallback request")
 	}
-}
-
-func downloadFallbackProxyHTTPClient() *http.Client {
-	return &http.Client{
-		Transport: runtimecfg.NewHTTPTransport(),
-		Timeout:   0,
+	fetcher, err := netguard.NewDefaultFetcher()
+	if err != nil {
+		return nil, err
 	}
+	return fetcher.HTTPClientWithRedirect(ctx, maxRedirects, afterValidation).Do(req)
 }
 
 func downloadFallbackEnabled() bool {

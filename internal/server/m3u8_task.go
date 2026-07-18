@@ -1,12 +1,10 @@
 package server
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -14,8 +12,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-
-	"github.com/1136623363/watermark-go/internal/runtimecfg"
 )
 
 type mergeTask struct {
@@ -175,72 +171,12 @@ func runM3U8Merge(taskID, rawURL string) {
 }
 
 func executeFFmpegMerge(rawURL, outputFile string) error {
-	bin, err := resolveFFMPEGBinary()
-	if err != nil {
-		return err
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
-	defer cancel()
-
-	args := []string{
-		"-y",
-		"-hide_banner",
-		"-loglevel", "error",
-		"-i", rawURL,
-		"-c", "copy",
-		"-bsf:a", "aac_adtstoasc",
-		outputFile,
-	}
-	cmd := exec.CommandContext(ctx, bin, args...)
-	output, err := cmd.CombinedOutput()
-	if ctx.Err() == context.DeadlineExceeded {
-		return errors.New("m3u8 merge timeout")
-	}
-	if err == nil {
-		return nil
-	}
-
-	fallbackArgs := []string{
-		"-y",
-		"-hide_banner",
-		"-loglevel", "error",
-		"-i", rawURL,
-		"-c", "copy",
-		outputFile,
-	}
-	cmd = exec.CommandContext(ctx, bin, fallbackArgs...)
-	output, err = cmd.CombinedOutput()
-	if err == nil {
-		return nil
-	}
-
-	text := strings.TrimSpace(string(output))
-	if text == "" {
-		text = err.Error()
-	}
-	if strings.Contains(strings.ToLower(text), "encrypted") || strings.Contains(strings.ToLower(text), "key") {
-		return errors.New("encrypted m3u8 is not supported")
-	}
-	return fmt.Errorf("m3u8 merge failed: %s", text)
+	_, _ = rawURL, outputFile
+	return errors.New("m3u8 merge is disabled until guarded local prefetch is implemented")
 }
 
 func resolveFFMPEGBinary() (string, error) {
-	candidates := []string{
-		runtimecfg.FFMPEGBinary(),
-		"ffmpeg",
-		"ffmpeg.exe",
-	}
-	for _, candidate := range candidates {
-		candidate = strings.TrimSpace(candidate)
-		if candidate == "" {
-			continue
-		}
-		if path, err := exec.LookPath(candidate); err == nil {
-			return path, nil
-		}
-	}
-	return "", errors.New("ffmpeg binary not found")
+	return "", errors.New("ffmpeg network merge is disabled")
 }
 
 func buildPublicBaseURL(c *gin.Context) string {

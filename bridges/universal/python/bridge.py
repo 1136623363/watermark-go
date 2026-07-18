@@ -80,14 +80,47 @@ def merge_dict(base, override):
     return result
 
 
-def normalize_requests_overrides(value):
-    if not isinstance(value, dict):
-        return {}
-    result = dict(value)
-    timeout = result.get("timeout")
-    if isinstance(timeout, list):
-        result["timeout"] = tuple(timeout)
-    return result
+def normalized_config_key(key) -> str:
+    return "".join(ch for ch in str(key).lower() if ch.isalnum())
+
+
+def is_unsafe_musicdl_config_key(key) -> bool:
+    normalized = normalized_config_key(key)
+    if "request" in normalized and "override" in normalized:
+        return True
+    return normalized in {
+        "proxy",
+        "proxies",
+        "httpproxy",
+        "httpsproxy",
+        "allproxy",
+        "noproxy",
+        "header",
+        "headers",
+        "cookie",
+        "cookies",
+        "authorization",
+        "origin",
+        "referer",
+        "session",
+        "verify",
+        "stream",
+        "redirect",
+        "redirects",
+        "allowredirect",
+        "allowredirects",
+    }
+
+
+def reject_unsafe_musicdl_config(value):
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if is_unsafe_musicdl_config_key(key):
+                raise ValueError("unsafe musicdl config")
+            reject_unsafe_musicdl_config(child)
+    elif isinstance(value, list):
+        for child in value:
+            reject_unsafe_musicdl_config(child)
 
 
 def read_musicdl_config(payload):
@@ -97,7 +130,8 @@ def read_musicdl_config(payload):
     parsed = json.loads(str(raw))
     if not isinstance(parsed, dict):
         return {}
-    if "sources" in parsed or "requests_overrides" in parsed:
+    reject_unsafe_musicdl_config(parsed)
+    if "sources" in parsed:
         return parsed
     return {"sources": parsed}
 
@@ -224,10 +258,7 @@ def build_music_client(payload, url=""):
     for source in sources:
         init_cfg[source] = merge_dict({"work_dir": str(Path(work_dir) / source)}, per_source_cfg.get(source, {}))
 
-    request_override = normalize_requests_overrides(music_config.get("requests_overrides"))
-    request_override = merge_dict(request_override, normalize_requests_overrides(payload.get("requestOverride")))
-    request_override.setdefault("timeout", (5, 10))
-    return MusicClient(music_sources=sources, init_music_clients_cfg=init_cfg, requests_overrides=request_override), sources
+    return MusicClient(music_sources=sources, init_music_clients_cfg=init_cfg), sources
 
 
 def parse_video(payload: dict):
@@ -240,11 +271,9 @@ def parse_video(payload: dict):
 
     work_dir = os.environ.get("BRIDGE_WORK_DIR") or str(project_root() / "runtime")
     sources = payload.get("sources") or []
-    request_override = payload.get("requestOverride") or {}
     client = VideoClient(
         allowed_video_sources=sources,
         init_video_clients_cfg={"WebMediaGrabber": {"work_dir": work_dir}},
-        requests_overrides=request_override if isinstance(request_override, dict) else {},
         apply_common_video_clients_only=bool(payload.get("commonOnly")),
     )
     with contextlib.redirect_stdout(sys.stderr):
@@ -282,10 +311,55 @@ def parse_music_playlist(payload: dict):
     )
 
 
+def validate_guard_proxy(raw_proxy: str) -> str:
+    try:
+        parsed = urllib.parse.urlparse(str(raw_proxy or "").strip())
+        port = parsed.port
+    except Exception as exc:
+        raise ValueError("invalid guard proxy") from exc
+    host = (parsed.hostname or "").lower()
+    if (
+        parsed.scheme != "http"
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.params
+        or parsed.query
+        or parsed.fragment
+        or port is None
+    ):
+        raise ValueError("invalid guard proxy")
+    if parsed.path not in {"", "/"}:
+        raise ValueError("invalid guard proxy")
+    if host not in {"127.0.0.1", "::1"}:
+        raise ValueError("invalid guard proxy")
+    host_part = "[::1]" if host == "::1" else host
+    return f"http://{host_part}:{port}"
+
+
+def parse_cli_args(argv):
+    mode = argv[1] if len(argv) > 1 else ""
+    guard_proxy = ""
+    index = 2
+    while index < len(argv):
+        arg = argv[index]
+        if arg == "--guard-proxy" and index + 1 < len(argv):
+            guard_proxy = argv[index + 1].strip()
+            index += 2
+            continue
+        raise ValueError(f"unknown bridge argument: {arg}")
+    if not guard_proxy:
+        raise ValueError("missing guard proxy")
+    return mode, validate_guard_proxy(guard_proxy)
+
+
 def main():
-    mode = sys.argv[1] if len(sys.argv) > 1 else ""
     payload = read_payload()
     try:
+        mode, guard_proxy = parse_cli_args(sys.argv)
+        for name in ("HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy"):
+            os.environ[name] = guard_proxy
+        for name in ("NO_PROXY", "no_proxy"):
+            os.environ[name] = ""
         if mode == "video":
             parse_video(payload)
         elif mode == "music-search":

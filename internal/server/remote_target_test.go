@@ -2,15 +2,15 @@ package server
 
 import "testing"
 
-func TestValidateRemoteTargetAllowsPrivateOnlyWhenEnabled(t *testing.T) {
+func TestValidateRemoteTargetRejectsPrivateTargetsEvenWhenLegacyOverrideIsSet(t *testing.T) {
 	t.Setenv("DOWNLOAD_FALLBACK_ALLOW_PRIVATE_URLS", "")
 	if err := validateRemoteTarget("http://127.0.0.1:18080/sample.mp4"); err == nil {
 		t.Fatal("expected private target to be rejected by default")
 	}
 
 	t.Setenv("DOWNLOAD_FALLBACK_ALLOW_PRIVATE_URLS", "true")
-	if err := validateRemoteTarget("http://127.0.0.1:18080/sample.mp4"); err != nil {
-		t.Fatalf("expected private target to be allowed for local testing, got %v", err)
+	if err := validateRemoteTarget("http://127.0.0.1:18080/sample.mp4"); err == nil {
+		t.Fatal("legacy private-target override should no longer bypass netguard")
 	}
 }
 

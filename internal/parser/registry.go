@@ -28,8 +28,9 @@ type InvalidRequestURLError struct{}
 func (*InvalidRequestURLError) Error() string { return "parser request URL is invalid" }
 
 type Registry struct {
-	descriptors []Descriptor
-	keys        map[PlatformKey]int
+	descriptors        []Descriptor
+	keys               map[PlatformKey]int
+	reservedInputHosts map[string]struct{}
 }
 
 type Catalog struct {
@@ -60,7 +61,10 @@ func NewRegistry(input []Descriptor) (*Registry, error) {
 		}
 		return descriptors[left].Key < descriptors[right].Key
 	})
-	registry := &Registry{descriptors: descriptors, keys: make(map[PlatformKey]int)}
+	registry := &Registry{
+		descriptors: descriptors, keys: make(map[PlatformKey]int),
+		reservedInputHosts: make(map[string]struct{}),
+	}
 	hostOwners := make([]struct {
 		rule HostRule
 		key  PlatformKey
@@ -120,6 +124,21 @@ func NewRegistry(input []Descriptor) (*Registry, error) {
 				key  PlatformKey
 			}{rule: rule, key: descriptor.Key})
 		}
+		for ruleIndex, rule := range descriptor.AuthorityRules {
+			if rule.DynamicPublic {
+				descriptor.AuthorityRules[ruleIndex] = rule
+				continue
+			}
+			host, err := normalizeRegistryHost(rule.Host)
+			if err != nil {
+				return nil, fmt.Errorf("invalid authority host for %q: %w", descriptor.Key, err)
+			}
+			rule.Host = host
+			descriptor.AuthorityRules[ruleIndex] = rule
+			if rule.Purpose != netguard.PurposeInputShare && !descriptorHasExactInputHost(*descriptor, host) {
+				registry.reservedInputHosts[host] = struct{}{}
+			}
+		}
 	}
 	return registry, nil
 }
@@ -147,6 +166,9 @@ func (registry *Registry) ResolveURL(raw string) (Descriptor, error) {
 	host, err := normalizeRegistryHost(parsed.Hostname())
 	if err != nil {
 		return Descriptor{}, &UnknownHostError{}
+	}
+	if _, reserved := registry.reservedInputHosts[host]; reserved {
+		return Descriptor{}, &UnknownHostError{Host: host}
 	}
 	for _, descriptor := range registry.descriptors {
 		for _, rule := range descriptor.HostRules {
@@ -269,7 +291,17 @@ func cloneDescriptor(descriptor Descriptor) Descriptor {
 	descriptor.Aliases = append([]PlatformKey(nil), descriptor.Aliases...)
 	descriptor.HostRules = append([]HostRule(nil), descriptor.HostRules...)
 	descriptor.QueryKeys = append([]string(nil), descriptor.QueryKeys...)
+	descriptor.AuthorityRules = append([]netguard.AuthorityRule(nil), descriptor.AuthorityRules...)
 	return descriptor
+}
+
+func descriptorHasExactInputHost(descriptor Descriptor, host string) bool {
+	for _, rule := range descriptor.HostRules {
+		if rule.Host == host {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizeRegistryHost(raw string) (string, error) {

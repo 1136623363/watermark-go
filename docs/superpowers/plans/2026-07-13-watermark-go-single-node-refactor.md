@@ -677,7 +677,7 @@ git commit -m "refactor: isolate parser adapters and remove embedded credentials
 全树出口、subprocess egress proxy、response/resource 完整矩阵和 AST/go-types 封口，并机械迁移全部
 production callsite。任何无法强制使用同一 guard 的网络路径在 production fail closed。
 
-- [ ] **步骤 1：编写 SSRF 表格测试**
+- [x] **步骤 1：编写 SSRF 表格测试**
 
 覆盖 `127.0.0.1`、`::1`、RFC1918、CGNAT、链路本地、metadata、十进制/八进制 IP、IDNA、大小写、
 尾点、userinfo、非常规端口、redirect loop、重定向到私网、DNS 首次公网随后私网，以及允许的公网地址。
@@ -732,13 +732,13 @@ Go AST 之外，`tests/policy/test_python_bridge_security.py` 用 Python AST/结
 proxies/verify/stream/redirect 或注入 session/header；最多允许 clamp 到更严格的 timeout/size。bridge
 源码与固定 hash 纳入 policy，直接 requests/socket/subprocess 新出口未走 sandbox adapter 即失败。
 
-- [ ] **步骤 2：确认失败**
+- [x] **步骤 2：确认失败**
 
 运行：`go test ./internal/netguard ./internal/policy -run 'TestDial|TestProductionNetworkEgress' -count=1`
 
 预期：FAIL，Task 3 的 core 已存在，但全树出口门禁、subprocess proxy 与剩余 callsite 尚未完成。
 
-- [ ] **步骤 3：实现请求前、重定向和 DialContext 三层校验**
+- [x] **步骤 3：实现请求前、重定向和 DialContext 三层校验**
 
 类型层区分不可日志化且只供受控 client 使用的 `FetchURL`、允许持久化/响应的 `SafeURL` 和用途域分离的
 不可逆 `CacheKey`，避免普通 `String()` 意外输出完整敏感 query。不得通过字符串替换假设目标支持 TLS。
@@ -804,7 +804,7 @@ ffmpeg 的 production 路径，并以测试证明 argv/protocol whitelist 只允
 子清单和全部分片并重写成本地清单后恢复功能；始终拒绝
 `http/https/tcp/tls/crypto/concat/data`。
 
-- [ ] **步骤 4：验证所有网络路径未绕过**
+- [x] **步骤 4：验证所有网络路径未绕过**
 
 运行：
 
@@ -820,7 +820,13 @@ git grep -n -- '--proxy\|HTTP_PROXY\|HTTPS_PROXY\|NO_PROXY' internal/parser
 不可覆盖的 egress proxy 构造器与对应测试。以门禁报告的精确 callsite 清单和 `git diff --name-only`
 双重核对本任务修改面，不能靠手写的少数 grep 猜测完整性。
 
-- [ ] **步骤 5：Commit**
+**完成证据（2026-07-18）：** `go test ./internal/netguard ./internal/parser/... ./internal/policy -run 'TestDial|TestProductionNetworkEgress|TestRunner|TestPythonBridge|TestSandbox|TestProxy' -count=1`、
+`GOMAXPROCS=2 go test ./... -count=1`、`go vet ./...`、`git diff --check` PASS。当前服务器未安装
+pytest，未在服务器安装依赖；已用 Python 直接加载 `tests/policy/test_python_bridge_security.py` 并执行
+四个 `test_` 函数，均 PASS。`python3 -m pytest tests/policy/test_python_bridge_security.py -q` 的失败原因为
+`No module named pytest`，不是 policy 断言失败。
+
+- [x] **步骤 5：Commit**
 
 ```bash
 # 依据 AST 门禁保存的精确 callsite 清单逐个 stage；下面是当前已知必需路径，出现新出口须追加。

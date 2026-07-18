@@ -75,6 +75,49 @@ func TestShouldUseProxyForTarget(t *testing.T) {
 	}
 }
 
+func TestNormalizeRejectsRemoteDNSAndCredentialedProxyConfig(t *testing.T) {
+	tests := []string{
+		"socks5h://127.0.0.1:1080",
+		"http://user:pass@127.0.0.1:8080",
+		"https://token@proxy.example:443",
+	}
+	for _, proxyURL := range tests {
+		t.Run(proxyURL, func(t *testing.T) {
+			settings := defaults()
+			settings.OutboundProxy = proxyURL
+			if err := normalizeAndValidate(&settings); err == nil {
+				t.Fatalf("normalizeAndValidate accepted unsafe proxy %q", proxyURL)
+			}
+		})
+	}
+}
+
+func TestNormalizeRejectsUnsafeMusicDLNetworkOverrideConfig(t *testing.T) {
+	tests := []string{
+		`{"sources":{"TIDALMusicClient":{"requests_overrides":{"headers":{"Cookie":"x"}}}}}`,
+		`{"sources":{"TIDALMusicClient":{"proxies":{"https":"http://evil.example:8080"}}}}`,
+		`{"sources":{"TIDALMusicClient":{"verify":false}}}`,
+		`{"sources":{"TIDALMusicClient":{"stream":true}}}`,
+		`{"sources":{"TIDALMusicClient":{"allow_redirects":true}}}`,
+		`{"sources":{"TIDALMusicClient":{"session":{"id":"x"}}}}`,
+	}
+	for _, configured := range tests {
+		t.Run(configured, func(t *testing.T) {
+			settings := defaults()
+			settings.UniversalParserMusicDLConfigJSON = configured
+			if err := normalizeAndValidate(&settings); err == nil {
+				t.Fatal("normalizeAndValidate accepted unsafe musicdl network override config")
+			}
+		})
+	}
+
+	settings := defaults()
+	settings.UniversalParserMusicDLConfigJSON = `{"sources":{"TIDALMusicClient":{"quality":"lossless"}}}`
+	if err := normalizeAndValidate(&settings); err != nil {
+		t.Fatalf("normalizeAndValidate rejected safe musicdl config: %v", err)
+	}
+}
+
 func TestNormalizeClusterDisabledNodes(t *testing.T) {
 	settings := defaults()
 	settings.ClusterDisabledNodes = []string{" worker-1 ", "", "WORKER-1", "http://192.168.31.222:5001", "worker-2"}

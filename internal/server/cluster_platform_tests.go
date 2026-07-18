@@ -1,10 +1,7 @@
 package server
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -193,49 +190,8 @@ func runAdminPlatformTestOnTarget(item adminTestLink, target adminPlatformTestTa
 }
 
 func runRemoteAdminPlatformTest(item adminTestLink, target adminPlatformTestTarget) (adminPlatformTestResult, error) {
-	body, err := json.Marshal(item)
-	if err != nil {
-		return adminPlatformTestResult{}, err
-	}
-
-	timeout := time.Duration(runtimecfg.Current().ClusterRemoteTestTimeoutSeconds) * time.Second
-	if timeout <= 0 {
-		timeout = 120 * time.Second
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target.Endpoint+"/api/internal/platform-test", bytes.NewReader(body))
-	if err != nil {
-		return adminPlatformTestResult{}, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if token := strings.TrimSpace(os.Getenv("CLUSTER_INTERNAL_TOKEN")); token != "" {
-		req.Header.Set("X-Cluster-Token", token)
-	}
-
-	client := &http.Client{Timeout: timeout + 5*time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return adminPlatformTestResult{}, fmt.Errorf("worker %s request failed: %w", firstNonEmpty(target.Node.Name, target.Endpoint), err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return adminPlatformTestResult{}, fmt.Errorf("worker %s returned HTTP %d", firstNonEmpty(target.Node.Name, target.Endpoint), resp.StatusCode)
-	}
-
-	var payload struct {
-		Code int                     `json:"code"`
-		Msg  string                  `json:"msg"`
-		Data adminPlatformTestResult `json:"data"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return adminPlatformTestResult{}, err
-	}
-	if payload.Code != 0 {
-		return adminPlatformTestResult{}, errors.New(firstNonEmpty(payload.Msg, "worker platform test failed"))
-	}
-	return payload.Data, nil
+	_ = item
+	return adminPlatformTestResult{}, fmt.Errorf("worker %s platform tests are disabled in single-node mode", firstNonEmpty(target.Node.Name, target.Endpoint))
 }
 
 func handleInternalPlatformTest(c *gin.Context) {

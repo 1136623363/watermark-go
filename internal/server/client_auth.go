@@ -23,7 +23,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/1136623363/watermark-go/internal/runtimecfg"
+	"github.com/1136623363/watermark-go/internal/netguard"
 )
 
 const (
@@ -79,11 +79,31 @@ var fallbackClientSessions = &memoryClientSessionStore{
 }
 
 var weChatHTTPDo = func(request *http.Request) (*http.Response, error) {
-	client := &http.Client{
-		Transport: runtimecfg.NewHTTPTransport(),
-		Timeout:   5 * time.Second,
+	if request == nil {
+		return nil, errors.New("nil wechat request")
 	}
-	return client.Do(request)
+	fetcher, err := netguard.NewDefaultFetcher()
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(request.Context(), 5*time.Second)
+	response, err := fetcher.HTTPClient(ctx, 0).Do(request.Clone(ctx))
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	response.Body = cancelOnCloseReadCloser{ReadCloser: response.Body, cancel: cancel}
+	return response, nil
+}
+
+type cancelOnCloseReadCloser struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (body cancelOnCloseReadCloser) Close() error {
+	body.cancel()
+	return body.ReadCloser.Close()
 }
 
 func handleClientSessionCreate(c *gin.Context) {

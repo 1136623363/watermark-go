@@ -1,6 +1,10 @@
 package parser
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/1136623363/watermark-go/internal/netguard"
+)
 
 type PlatformKey string
 
@@ -33,8 +37,9 @@ type Descriptor struct {
 	// SessionHost is the explicit exact upstream authority to which short-lived
 	// material is sent. It is independent of the user's share URL host. Empty
 	// means that the descriptor does not consume short-lived session material.
-	SessionHost string
-	New         func(Dependencies) (Parser, error)
+	SessionHost    string
+	AuthorityRules []netguard.AuthorityRule
+	New            func(Dependencies) (Parser, error)
 }
 
 func (descriptor Descriptor) hasCapability(capability Capability) bool {

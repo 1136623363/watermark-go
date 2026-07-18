@@ -75,7 +75,21 @@ func TestRunnerCommandHasOneNonOverridableProxyAndMinimalEnvironment(t *testing.
 			proxyCount++
 		}
 	}
-	if proxyCount != 1 || !reflect.DeepEqual(command.Env, []string{"LANG=C.UTF-8", "LC_ALL=C.UTF-8"}) {
+	wantEnv := []string{
+		"LANG=C.UTF-8",
+		"LC_ALL=C.UTF-8",
+		"HOME=/tmp/netguard-empty-home",
+		"XDG_CONFIG_HOME=/tmp/netguard-empty-xdg",
+		"HTTP_PROXY=",
+		"http_proxy=",
+		"HTTPS_PROXY=",
+		"https_proxy=",
+		"ALL_PROXY=",
+		"all_proxy=",
+		"NO_PROXY=",
+		"no_proxy=",
+	}
+	if proxyCount != 1 || !reflect.DeepEqual(command.Env, wantEnv) || strings.Count(strings.Join(command.Args, " "), "--ignore-config") != 1 {
 		t.Fatalf("unsafe command shape: proxy_count=%d arg_count=%d env_count=%d", proxyCount, len(command.Args), len(command.Env))
 	}
 	joined := strings.Join(command.Args, " ")

@@ -17,6 +17,7 @@ import (
 
 	adminweb "github.com/1136623363/watermark-go/internal/admin/web"
 	"github.com/1136623363/watermark-go/internal/config"
+	"github.com/1136623363/watermark-go/internal/netguard"
 	parser "github.com/1136623363/watermark-go/internal/parser/native"
 	"github.com/1136623363/watermark-go/internal/runtimecfg"
 	"github.com/1136623363/watermark-go/internal/utils"
@@ -974,60 +975,23 @@ func normalizePlatform(source string) string {
 }
 
 func applyRuntimeSettings() {
-	runtimecfg.ApplyGlobalHTTPSettings()
+	// Runtime settings are applied through explicit component dependencies.
+	// Production no longer mutates http.DefaultClient/DefaultTransport.
 }
 
 func validateRemoteTarget(raw string) error {
-	if raw == "" {
-		return errors.New("url is empty")
-	}
-	parsed, err := neturl.Parse(raw)
+	target, err := netguard.NewFetchURL(raw)
 	if err != nil {
 		return errors.New("invalid download url")
 	}
-	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return errors.New("invalid download url")
+	validator, err := netguard.NewValidator(netguard.ValidatorOptions{})
+	if err != nil {
+		return errors.New("download url guard unavailable")
 	}
-	host := parsed.Hostname()
-	if host == "" {
-		return errors.New("invalid download url")
-	}
-	allowPrivateTargets := envBoolLocal("DOWNLOAD_FALLBACK_ALLOW_PRIVATE_URLS", false)
-	if strings.EqualFold(host, "localhost") {
-		if allowPrivateTargets {
-			return nil
-		}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := validator.Validate(ctx, target); err != nil {
 		return errors.New("unsafe download url")
 	}
-	if ip := net.ParseIP(host); ip != nil {
-		if !allowPrivateTargets && !isPublicIP(ip) {
-			return errors.New("unsafe download url")
-		}
-		return nil
-	}
-	if allowPrivateTargets {
-		return nil
-	}
-	ips, err := net.LookupIP(host)
-	if err != nil || len(ips) == 0 {
-		return nil
-	}
-	for _, ip := range ips {
-		if !isPublicIP(ip) {
-			return errors.New("unsafe download url")
-		}
-	}
 	return nil
-}
-
-func isPublicIP(ip net.IP) bool {
-	if ip == nil {
-		return false
-	}
-	return !ip.IsLoopback() &&
-		!ip.IsPrivate() &&
-		!ip.IsLinkLocalMulticast() &&
-		!ip.IsLinkLocalUnicast() &&
-		!ip.IsMulticast() &&
-		!ip.IsUnspecified()
 }
