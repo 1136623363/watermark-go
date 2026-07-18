@@ -1806,7 +1806,7 @@ git commit -m "refactor: compose single-node HTTP application"
 `tests/e2e/conftest.py` 已随批准基线存在；本任务扩展其 fixture 和隔离逻辑，不得把它描述成新建文件
 或覆盖掉已有安全默认值。
 
-- [ ] **步骤 1：编写前端 envelope 和任务状态契约**
+- [x] **步骤 1：编写前端 envelope 和任务状态契约**
 
 覆盖 session、`1008/1009` HTTP 200、同步/异步解析、公开 poll、分享缓存、performance 降级、
 fallback 双响应形态、m3u8 done/error、绝对同域 HTTPS downloadUrl。
@@ -1830,20 +1830,34 @@ URL，m3u8 task poll 则按前端固定行为只发送随机 >=128-bit ID、最�
 token。前端发送认证的请求同时验证 token/Bearer。Node fixture 必须证明没有隐式补 token 时上述每条
 路径仍可完成，任意 ID/ticket 篡改均失败。
 
-- [ ] **步骤 2：运行并确认至少一个失败**
+结果：新增 `tests/contracts/frontend_contract_test.go`，覆盖 session、token/Bearer parse、1008 HTTP 200、
+parse task submit/poll、share cache、匿名 fallback/m3u8/performance、final file ticket purpose、health
+单机 payload、跨节点/内部路由 404、rich media `images`/`imageAssets` 投影、media-parser 研究融合 machine
+section、registry golden、query policy、candidate ranking/budget、cache version/negative semantics 与 unsafe
+URL 负向协议。
+
+- [x] **步骤 2：运行并确认至少一个失败**
 
 运行：`go test ./tests/contracts -count=1`
 
 预期：FAIL，指出尚未对齐的协议细节。
 
-- [ ] **步骤 3：修正协议差异并建立分层测试 harness**
+结果：首次运行失败于 `GET /api/m3u8/merge?url=...` 仍按 JSON body 绑定返回 `1004`，以及
+`scripts/verify-frontend-provenance.sh` 缺失。红灯符合预期。
+
+- [x] **步骤 3：修正协议差异并建立分层测试 harness**
 
 本任务本地只运行 hermetic/in-process Go 契约，依赖注入 fake store/cache/WeChat exchanger，不在目标宿主
 执行 `docker run`、`go run` 或启动服务。服务级 Python E2E 由任务 13 的 GitHub Actions runner 使用
 固定 digest 的 MySQL/Redis service containers 与当前源码测试二进制执行；任务 17 再对已经从 GHCR
 拉取的 production 镜像执行同一服务契约。pytest 若依赖服务未就绪必须 FAIL，不能 skip 成功。
 
-- [ ] **步骤 4：运行 E2E**
+结果：`internal/httpapi/download_handlers.go` 支持 GET m3u8 query payload；新增
+`scripts/verify-frontend-provenance.sh`，验证 `/srv/watermark` clean、commit/tree 与 tracked manifest hash。
+更新 `tests/e2e/conftest.py` 和 health/auth/public/admin/fallback/frontend-flow pytest，使其描述当前单机 API；
+本地仅做 Python syntax check，不启动服务。
+
+- [x] **步骤 4：运行 E2E**
 
 ```bash
 go test ./tests/contracts -count=1
@@ -1852,7 +1866,17 @@ go test ./internal/httpapi ./internal/auth -count=1
 
 预期：本地 hermetic 测试全部 PASS；这里不调用需要活服务的 pytest。
 
-- [ ] **步骤 5：在固定且未修改的原前端快照运行 Node 契约**
+结果：
+
+```bash
+go test ./tests/contracts -count=1
+go test ./internal/httpapi ./internal/auth -count=1
+python3 -m py_compile tests/e2e/conftest.py tests/e2e/test_*.py
+```
+
+全部通过；未启动服务、未运行 Docker/Buildx/镜像构建。
+
+- [x] **步骤 5：在固定且未修改的原前端快照运行 Node 契约**
 
 `scripts/verify-frontend-provenance.sh` 接受 `FRONTEND_REPO`，验证 clean、commit
 `5d72c4925017676b6183b907dfe11ec60a4885bf`、tree `03c72a16532f51db76203967a3b982d49d4909d1`，以及
@@ -1868,7 +1892,22 @@ FRONTEND_REPO=/srv/watermark scripts/verify-frontend-provenance.sh
 预期：所有脚本退出 0 且前端仓库前后均 clean/hash 不变。Actions 不依赖该绝对路径，而是 second
 checkout `1136623363/watermark` 的精确 commit 到隔离目录、运行同一 guard 与 Node contracts。
 
-- [ ] **步骤 6：Commit**
+结果：
+
+```bash
+FRONTEND_REPO=/srv/watermark scripts/verify-frontend-provenance.sh
+for f in /srv/watermark/test/test_miniprogram_*.js; do node "$f"; done
+FRONTEND_REPO=/srv/watermark scripts/verify-frontend-provenance.sh
+GOMAXPROCS=2 go test ./... -count=1
+go vet ./...
+git diff --check
+go test ./internal/policy -run TestRepositorySecurityAuditCoversIndexWorktreeHistoryAndRefs -count=1
+git -C /srv/watermark status --short
+```
+
+全部通过；前端仓库前后均 clean/hash 不变；期间未运行 Docker/Buildx/镜像构建命令。
+
+- [x] **步骤 6：Commit**
 
 ```bash
 git add tests scripts/verify-frontend-provenance.sh docs/frontend-provenance.json

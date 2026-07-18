@@ -29,12 +29,19 @@ class APIClient:
         self.base_url = base_url.rstrip("/") + "/"
         self.timeout = timeout
         self.session = requests.Session()
+        self.csrf_token = ""
 
     def url(self, path: str) -> str:
         return urljoin(self.base_url, path.lstrip("/"))
 
     def request(self, method: str, path: str, **kwargs: Any) -> APIResponse:
         kwargs.setdefault("timeout", self.timeout)
+        headers = dict(kwargs.pop("headers", {}) or {})
+        if self.csrf_token and method.upper() in {"POST", "PATCH", "DELETE"} and path.startswith("/admin/api/"):
+            headers.setdefault("X-CSRF-Token", self.csrf_token)
+            headers.setdefault("Origin", self.base_url.rstrip("/"))
+        if headers:
+            kwargs["headers"] = headers
         response = self.session.request(method, self.url(path), **kwargs)
         try:
             body = response.json()
@@ -106,9 +113,12 @@ def admin_credentials() -> Dict[str, str]:
 @pytest.fixture()
 def admin_client(base_url: str, api_timeout: float, admin_credentials: Dict[str, str]) -> APIClient:
     api = APIClient(base_url, api_timeout)
-    login = api.post("/admin/login", json=admin_credentials)
+    login = api.post("/admin/api/login", json=admin_credentials)
     assert login.response.status_code == 200, login.response.text
     assert login.body.get("code") == 0, login.body
+    data = login.body.get("data") or {}
+    api.csrf_token = data.get("csrfToken", "")
+    assert api.csrf_token, data
     return api
 
 

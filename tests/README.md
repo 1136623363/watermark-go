@@ -2,25 +2,31 @@
 
 本目录承载 watermark-go 的 Go 契约测试、pytest 服务端到端测试、解析基准门禁和运维脚本测试。测试必须明确区分“通过”“失败”和“依赖未就绪”；不得把未执行或跳过关键依赖伪装为成功。
 
-当前 Task 11 已补入单机 HTTP 路由、请求 ID、CORS、服务超时、下载流式 idle 保护和匿名 performance 采集的 Go 测试。后续 Task 12 会把这些能力扩展为前端契约与运行中服务的 E2E 验收。
+当前 Task 12 已补入 hermetic Go 前端契约、固定小程序快照 provenance guard、以及面向运行中服务的 pytest E2E 草案。本地 Task 12 验证不启动服务；服务级 E2E 由后续 runner 或已拉取的不可变运行镜像执行。
 
 ## 目标结构
 
 - `contracts/frontend_contract_test.go`：锁定当前小程序的 session、同步/异步解析、分享缓存、下载兜底、m3u8 与 performance 协议。
 - `e2e/test_frontend_flow.py`：对运行中服务复现当前前端完整流程。
-- `e2e/test_admin_and_security.py`：后台单机能力、认证、输入边界和安全回归。
+- `e2e/test_admin_api_contracts.py`、`e2e/test_admin_and_fallback.py`：后台单机能力、认证、输入边界和下载兜底回归。
 - `baseline/fixtures/platform-samples.json`：96 个版本化样本，其中 93 个启用。
 - `baseline/test_report.py`：验证三项硬门槛和报告完整性。
 - `ops/test_scripts.py`：部署、回滚、镜像验证、主机快照和资源停止线的脚本测试。
 
 ## 执行方式
 
-Task 12 完成后，契约与 E2E 的标准入口为：
+Task 12 的本地入口为：
 
 ```bash
 go test ./tests/contracts -count=1
-python3 -m pytest tests/e2e -q
+python3 -m py_compile tests/e2e/conftest.py tests/e2e/test_*.py
+FRONTEND_REPO=/srv/watermark scripts/verify-frontend-provenance.sh
+for f in /srv/watermark/test/test_miniprogram_*.js; do node "$f"; done
+FRONTEND_REPO=/srv/watermark scripts/verify-frontend-provenance.sh
 ```
+
+运行中服务的 pytest E2E 不在本机 Task 12 启动服务；后续 CI/验收环境准备好服务后执行
+`python3 -m pytest tests/e2e -q`，若服务依赖未就绪必须失败，不得以 skip 伪装成功。
 
 Task 14 完成后，再执行：
 

@@ -1,18 +1,14 @@
-import re
-import uuid
-
-import pytest
 import requests
 
-from conftest import assert_api_ok, assert_http_ok, wait_for_download_task
+import pytest
+
+from conftest import assert_api_error, assert_api_ok, assert_http_ok, wait_for_download_task
 
 
-def _fallback_payload(source_url, media_url, share_id):
+def _fallback_payload(media_url):
     return {
-        "sourceUrl": source_url,
         "mediaUrl": media_url,
         "mediaType": "video",
-        "shareId": share_id,
         "attempt": 4,
     }
 
@@ -24,52 +20,37 @@ def test_admin_auth_and_summary(client, admin_client):
     assert unauthorized.body.get("code") == 401, unauthorized.body
 
     bad_login = client.post(
-        "/admin/login",
+        "/admin/api/login",
         json={"username": "admin", "password": "definitely-wrong"},
     )
     assert bad_login.response.status_code == 401, bad_login.response.text
 
     summary = admin_client.get("/admin/api/summary")
     data = assert_api_ok(summary)
-    assert data["infrastructure"]["mysqlStatus"] == "ok", data
-    assert data["infrastructure"]["redisStatus"] == "ok", data
-    assert data["settings"]["downloadFallbackMode"] in {"cache", "proxy", "cdn"}, data
+    assert data["uptimeSeconds"] >= 0, data
+    assert "platformCount" in data, data
 
 
 @pytest.mark.fallback
-def test_download_fallback_rejects_bad_inputs(client, client_session):
-    token = client_session["token"]
-
+def test_download_fallback_rejects_bad_inputs(client):
     invalid_payload = client.post(
         "/api/download/fallback",
         data="not-json",
-        headers={"Content-Type": "application/json", "token": token},
+        headers={"Content-Type": "application/json"},
     )
     assert invalid_payload.response.status_code == 200
     assert invalid_payload.body.get("code") == 1004, invalid_payload.body
 
-    unsupported_media = client.post(
+    too_early = client.post(
         "/api/download/fallback",
-        json={
-            "sourceUrl": "https://v.douyin.com/e2e/",
-            "mediaUrl": "https://example.com/file.bin",
-            "mediaType": "binary",
-            "shareId": "bad-media",
-        },
-        headers={"token": token},
+        json={"mediaUrl": "https://example.com/file.mp4", "mediaType": "video", "attempt": 1},
     )
-    assert unsupported_media.response.status_code == 200
-    assert unsupported_media.body.get("code") == 1004, unsupported_media.body
+    assert too_early.response.status_code == 200
+    assert too_early.body.get("code") == 1004, too_early.body
 
     invalid_url = client.post(
         "/api/download/fallback",
-        json={
-            "sourceUrl": "https://v.douyin.com/e2e/",
-            "mediaUrl": "not-a-url",
-            "mediaType": "video",
-            "shareId": "bad-url",
-        },
-        headers={"token": token},
+        json={"mediaUrl": "not-a-url", "mediaType": "video", "attempt": 4},
     )
     assert invalid_url.response.status_code == 200
     assert invalid_url.body.get("code") == 1004, invalid_url.body
@@ -77,40 +58,13 @@ def test_download_fallback_rejects_bad_inputs(client, client_session):
 
 @pytest.mark.e2e
 @pytest.mark.fallback
-def test_download_fallback_full_flow_records_actual_mode(
-    client,
-    admin_client,
-    client_session,
-    media_url,
-    source_url,
-    download_timeout,
-):
-    health = assert_api_ok(client.get("/api/health"))
-    mode = health["node"]["downloadFallbackMode"]
-    share_id = "pytest-" + uuid.uuid4().hex[:10]
-    token = client_session["token"]
-    uid = str(client_session["uid"])
-    assert re.fullmatch(r"\d{8}", uid), client_session
-
-    created = client.post(
-        "/api/download/fallback",
-        json=_fallback_payload(source_url, media_url, share_id),
-        headers={"token": token, "X-Forwarded-For": "203.0.113.20"},
-    )
+def test_download_fallback_full_flow(client, media_url, download_timeout):
+    created = client.post("/api/download/fallback", json=_fallback_payload(media_url))
     assert_http_ok(created)
+    data = assert_api_ok(created)
 
-    if mode == "cdn" and created.body.get("code") != 0:
-        pytest.fail(f"cdn mode is enabled but fallback creation failed: {created.body}")
-
-    assert created.body.get("code") == 0, created.body
-    data = created.body.get("data")
-
-    if isinstance(data, str):
-        download_url = data
-    else:
-        completed = wait_for_download_task(client, data, timeout_seconds=download_timeout)
-        download_url = completed.get("downloadUrl") or completed.get("url")
-
+    completed = wait_for_download_task(client, data, timeout_seconds=download_timeout)
+    download_url = completed.get("downloadUrl") or completed.get("url")
     assert isinstance(download_url, str) and download_url.startswith(("http://", "https://", "/")), download_url
 
     download_response = requests.get(
@@ -125,16 +79,3 @@ def test_download_fallback_full_flow_records_actual_mode(
         assert chunk, "download response should contain media bytes"
     finally:
         download_response.close()
-
-    records = assert_api_ok(admin_client.get("/admin/api/download-fallback?hours=1&limit=50"))
-    assert records["mode"] == mode, records
-    assert records["stats"]["byMode"].get(mode, 0) >= 1, records
-
-    recent = [item for item in records["recent"] if item.get("shareId") == share_id]
-    assert recent, records["recent"][:5]
-    assert any(item.get("mode") == mode for item in recent), recent
-    assert any(item.get("uid") == uid for item in recent), recent
-    assert all(item.get("uid", uid).isdigit() for item in recent if item.get("uid")), recent
-    task_ids = {item.get("taskId") for item in recent if item.get("taskId")}
-    assert task_ids, recent
-    assert len(task_ids) == 1, recent

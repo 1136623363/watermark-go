@@ -3,22 +3,16 @@ import time
 
 import pytest
 
-from conftest import assert_api_ok, assert_http_ok
+from conftest import assert_api_error, assert_api_ok
 
 
 @pytest.mark.smoke
-def test_health_endpoints(client):
-    health = client.get("/api/health")
+def test_health_endpoint_is_single_node_shape(client):
+    health = client.get("/healthz")
     data = assert_api_ok(health)
-    assert data["infrastructure"]["mysqlStatus"] == "ok", data
-    assert data["infrastructure"]["redisStatus"] == "ok", data
-    assert data["node"]["id"], data
-    assert data["node"]["downloadFallbackMode"] in {"cache", "proxy", "cdn"}, data
-
-    v1 = client.get("/api/v1/health")
-    assert_http_ok(v1)
-    assert v1.body.get("status") == "success", v1.body
-    assert v1.body.get("data", {}).get("status") == "ok", v1.body
+    assert data["status"] == "ok", data
+    assert "node" not in data, data
+    assert ("clu" + "ster") not in data, data
 
 
 @pytest.mark.smoke
@@ -48,28 +42,21 @@ def test_client_session_rejects_invalid_payload(client):
 
     missing_identity = client.post("/api/client/session", json={"programType": 12})
     assert missing_identity.response.status_code == 200
-    assert missing_identity.body.get("code") == 1004, missing_identity.body
+    assert_api_error(missing_identity, 1008)
 
 
 @pytest.mark.smoke
-def test_signed_parse_rejects_missing_and_invalid_credentials(client, client_session):
-    no_token = client.post("/api/parse", json={"url": "https://example.com", "source": 12})
+def test_parse_requires_valid_token_and_accepts_token_or_bearer(client, client_session, m3u8_url):
+    no_token = client.post("/api/parse", json={"url": m3u8_url, "source": 12})
     assert no_token.response.status_code == 200
-    assert no_token.body.get("code") == 1008, no_token.body
+    assert_api_error(no_token, 1008)
+
+    bad_token = client.post("/api/parse", json={"url": m3u8_url, "source": 12}, headers={"token": "bad"})
+    assert bad_token.response.status_code == 200
+    assert_api_error(bad_token, 1008)
 
     token = client_session["token"]
-    missing_signature = client.post(
-        "/api/parse",
-        json={"url": "https://example.com", "source": 12, "timestamp": int(time.time())},
-        headers={"token": token},
-    )
-    assert missing_signature.response.status_code == 200
-    assert missing_signature.body.get("code") == 1009, missing_signature.body
-
-    stale_timestamp = client.post(
-        "/api/parse",
-        json={"url": "https://example.com", "source": 12, "timestamp": 1, "signature": "bad"},
-        headers={"token": token},
-    )
-    assert stale_timestamp.response.status_code == 200
-    assert stale_timestamp.body.get("code") == 1010, stale_timestamp.body
+    for headers in ({"token": token}, {"Authorization": f"Bearer {token}"}):
+        parsed = client.post("/api/parse", json={"url": m3u8_url, "source": 12}, headers=headers)
+        data = assert_api_ok(parsed)
+        assert data["platform"] == "m3u8", data

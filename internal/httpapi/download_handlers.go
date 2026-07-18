@@ -96,7 +96,13 @@ func (handlers DownloadHandlers) GetFallback(c *gin.Context) {
 
 func (handlers DownloadHandlers) CreateM3U8(c *gin.Context) {
 	var request m3u8MergeRequest
-	if err := c.ShouldBindJSON(&request); err != nil {
+	if c.Request.Method == http.MethodGet {
+		request.URL = c.Query("url")
+	} else if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusOK, Response{Code: 1004, Msg: "invalid m3u8 payload"})
+		return
+	}
+	if strings.TrimSpace(request.URL) == "" {
 		c.JSON(http.StatusOK, Response{Code: 1004, Msg: "invalid m3u8 payload"})
 		return
 	}
