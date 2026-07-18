@@ -16,5 +16,8 @@
     "internal/server/migrations/006_enable_default_url_samples.sql"
   ],
   "catalogManifestAlgorithm": "sha256(filename + NUL + source-commit file bytes, in listed order)",
-  "catalogManifestSha256": "05d832a7d59897d16cd4bd26a7d02d6f6bdf5ec6829c1a280e974579fa29bf6a"
+  "catalogManifestSha256": "05d832a7d59897d16cd4bd26a7d02d6f6bdf5ec6829c1a280e974579fa29bf6a",
+  "canonicalFixturePath": "tests/baseline/fixtures/platform-samples.json",
+  "canonicalFixtureSha256": "bb0f55ea17ddc613f64282a5786a7ab137a945a847b444fdd2f4bfb212bc5eba",
+  "coverageClueDisposition": "coverage clue not adopted; ucmao/media-parser research remains non-authoritative and no productionEnabled candidate fixture was generated in Task 10"
 }

@@ -1,0 +1,674 @@
+[
+  {
+    "platformKey": "abc",
+    "sampleURL": "https://www.abc.net.au/btn/classroom/wwi-centenary/10527914",
+    "enabled": true,
+    "expectedPlatform": "abc",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "acfun",
+    "sampleURL": "https://www.acfun.cn/v/ac32776052",
+    "enabled": true,
+    "expectedPlatform": "acfun",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "arte",
+    "sampleURL": "https://www.arte.tv/en/videos/127781-000-A/arte-reportage/",
+    "enabled": true,
+    "expectedPlatform": "arte",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "baidutieba",
+    "sampleURL": "https://tieba.baidu.com/p/7280373361",
+    "enabled": true,
+    "expectedPlatform": "baidutieba",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "beacon",
+    "sampleURL": "https://beacon.tv/content/welcome-to-beacon",
+    "enabled": true,
+    "expectedPlatform": "beacon",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "bilibili",
+    "sampleURL": "https://www.bilibili.com/video/BV1634y1w7Nu/",
+    "enabled": true,
+    "expectedPlatform": "bilibili",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "c56",
+    "sampleURL": "https://www.56.com/u11/v_MTk5NjI0OTIw.html",
+    "enabled": true,
+    "expectedPlatform": "c56",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "ccc",
+    "sampleURL": "https://media.ccc.de/v/30C3_-_5443_-_en_-_saal_g_-_201312281830_-_introduction_to_processor_design_-_byterazor#video",
+    "enabled": true,
+    "expectedPlatform": "ccc",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "cctalk",
+    "sampleURL": "https://www.cctalk.com/v/17604950351552?sid=1760494906733025",
+    "enabled": true,
+    "expectedPlatform": "cctalk",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "cctv",
+    "sampleURL": "https://tv.cctv.com/2026/05/09/VIDEy4R1ur8n3rdXIUlV8bDu260509.shtml",
+    "enabled": true,
+    "expectedPlatform": "cctv",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "cctvnews",
+    "sampleURL": "https://content-static.cctvnews.cctv.com/snow-book/video.html?item_id=15184105708774284671",
+    "enabled": true,
+    "expectedPlatform": "cctvnews",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "chinadaily",
+    "sampleURL": "https://www.chinadaily.com.cn/a/202604/07/WS69d4c582a310d6866eb42089.html",
+    "enabled": true,
+    "expectedPlatform": "chinadaily",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "dailymotion",
+    "sampleURL": "https://www.dailymotion.com/video/x7t3la2",
+    "enabled": true,
+    "expectedPlatform": "dailymotion",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "dongchedi",
+    "sampleURL": "https://www.dongchedi.com/video/7595864547580658200",
+    "enabled": true,
+    "expectedPlatform": "dongchedi",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "doupai",
+    "sampleURL": "",
+    "enabled": false,
+    "expectedPlatform": "doupai",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "douyin",
+    "sampleURL": "https://v.douyin.com/i2YArd1J/",
+    "enabled": true,
+    "expectedPlatform": "douyin",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "eastday",
+    "sampleURL": "https://nw.eastday.com/bjzx/20260403/cc9f70957fd8439da55c921920a6f73a.html",
+    "enabled": true,
+    "expectedPlatform": "eastday",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "eyepetizer",
+    "sampleURL": "https://home.eyepetizer.net/video/video-detail?resource_id=219143&resource_type=pgc_video",
+    "enabled": true,
+    "expectedPlatform": "eyepetizer",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "facebook",
+    "sampleURL": "https://facebook.com/CTSHSTT/videos/374811976811983/",
+    "enabled": true,
+    "expectedPlatform": "facebook",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "foxnews",
+    "sampleURL": "https://www.foxnews.com/video/6385658327112",
+    "enabled": true,
+    "expectedPlatform": "foxnews",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "genius",
+    "sampleURL": "https://genius.com/videos/Halle-breaks-down-the-meaning-of-bite-your-lip",
+    "enabled": true,
+    "expectedPlatform": "genius",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "haokan",
+    "sampleURL": "https://haokan.baidu.com/v?vid=4737540153193310732&pd=pcshare",
+    "enabled": true,
+    "expectedPlatform": "haokan",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "huanqiu",
+    "sampleURL": "https://v.huanqiu.com/article/4RGKR80sTBx",
+    "enabled": true,
+    "expectedPlatform": "huanqiu",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "huoshan",
+    "sampleURL": "",
+    "enabled": false,
+    "expectedPlatform": "huoshan",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "huya",
+    "sampleURL": "https://v.huya.com/play/754425177.html",
+    "enabled": true,
+    "expectedPlatform": "huya",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "instagram",
+    "sampleURL": "https://www.instagram.com/reel/C62MdoDOWCr/",
+    "enabled": true,
+    "expectedPlatform": "instagram",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "iqiyi",
+    "sampleURL": "https://www.iqiyi.com/v_1wc7muawbrc.html",
+    "enabled": true,
+    "expectedPlatform": "iqiyi",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "kakao",
+    "sampleURL": "http://tv.kakao.com/channel/2671005/cliplink/301965083",
+    "enabled": true,
+    "expectedPlatform": "kakao",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "kankannews",
+    "sampleURL": "https://www.kankanews.com/detail/PbwRzE9qow4",
+    "enabled": true,
+    "expectedPlatform": "kankannews",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "ku6",
+    "sampleURL": "https://www.ku6.com/video/detail?id=McZoSe_hgG_jwzy7pQLqvMJ3IoI.",
+    "enabled": true,
+    "expectedPlatform": "ku6",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "kuaishou",
+    "sampleURL": "https://v.kuaishou.com/3yItmR",
+    "enabled": true,
+    "expectedPlatform": "kuaishou",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "kugoumv",
+    "sampleURL": "https://www.kugou.com/mv/8cwxy96/",
+    "enabled": true,
+    "expectedPlatform": "kugoumv",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "leshi",
+    "sampleURL": "https://www.le.com/ptv/vplay/78006876.html#vid=78006876",
+    "enabled": true,
+    "expectedPlatform": "leshi",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "lishipin",
+    "sampleURL": "https://www.pearvideo.com/detail_1768812?st=7",
+    "enabled": true,
+    "expectedPlatform": "lishipin",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "lvzhou",
+    "sampleURL": "https://m.oasis.weibo.cn/v1/h5/share?sid=4568005764186704",
+    "enabled": true,
+    "expectedPlatform": "lvzhou",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "m1905",
+    "sampleURL": "https://www.1905.com/video/play/1751538.shtml",
+    "enabled": true,
+    "expectedPlatform": "m1905",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "m3u8",
+    "sampleURL": "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+    "enabled": true,
+    "expectedPlatform": "m3u8",
+    "expectedType": "m3u8"
+  },
+  {
+    "platformKey": "meipai",
+    "sampleURL": "https://www.meipai.com/video/990/6870563584084037566",
+    "enabled": true,
+    "expectedPlatform": "meipai",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "mgtv",
+    "sampleURL": "https://www.mgtv.com/l/100026064/19868457.html?fpa=1684&fpos=&lastp=ch_home&cpid=5",
+    "enabled": true,
+    "expectedPlatform": "mgtv",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "mingpao",
+    "sampleURL": "https://news.mingpao.com/pns/%e5%89%af%e5%88%8a/article/20260428/s00005/1777310866112/%e6%96%b0%e8%88%88%e6%9d%bf%e7%b6%b2%e7%90%83%e6%98%93%e5%ad%b8%e9%9b%a3%e7%b2%be-%e3%80%8c%e7%a5%9e%e9%9a%8a%e5%8f%8b%e3%80%8d%e7%89%86%e7%b6%b2%e6%94%b9%e8%ae%8a%e7%90%83%e9%81%93%e8%87%b4%e5%8b%9d#goog_rewarded",
+    "enabled": true,
+    "expectedPlatform": "mingpao",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "music_apple",
+    "sampleURL": "https://music.apple.com/cn/playlist/%E5%8D%81%E5%A4%A7%E4%B8%93%E8%BE%91/pl.u-mJy81mECzBL49zM",
+    "enabled": true,
+    "expectedPlatform": "music_apple",
+    "expectedType": "audio"
+  },
+  {
+    "platformKey": "music_bodian",
+    "sampleURL": "https://h5app.kuwo.cn/m/bodian/collection.html?uid=1798690&playlistId=1669719&source=5&ownerId=1798690",
+    "enabled": true,
+    "expectedPlatform": "music_bodian",
+    "expectedType": "audio"
+  },
+  {
+    "platformKey": "music_deezer",
+    "sampleURL": "https://www.deezer.com/us/playlist/4697225044",
+    "enabled": true,
+    "expectedPlatform": "music_deezer",
+    "expectedType": "audio"
+  },
+  {
+    "platformKey": "music_fivesing",
+    "sampleURL": "https://5sing.kugou.com/yeluoluo/dj/631b3fa72418b11003089b8d.html",
+    "enabled": true,
+    "expectedPlatform": "music_fivesing",
+    "expectedType": "audio"
+  },
+  {
+    "platformKey": "music_fma",
+    "sampleURL": "https://freemusicarchive.org/member/Creative_Commons/cc-20th-anniversary-open-mix",
+    "enabled": true,
+    "expectedPlatform": "music_fma",
+    "expectedType": "audio"
+  },
+  {
+    "platformKey": "music_jamendo",
+    "sampleURL": "https://www.jamendo.com/playlist/500544876/best-of-february-2020",
+    "enabled": true,
+    "expectedPlatform": "music_jamendo",
+    "expectedType": "audio"
+  },
+  {
+    "platformKey": "music_jiosaavn",
+    "sampleURL": "https://www.jiosaavn.com/featured/world-music-day-telugu/3sLj61YBHdI_",
+    "enabled": true,
+    "expectedPlatform": "music_jiosaavn",
+    "expectedType": "audio"
+  },
+  {
+    "platformKey": "music_joox",
+    "sampleURL": "https://www.joox.com/hk/playlist/MqgK_LYD3Sb3I9Iziq+8NA==",
+    "enabled": true,
+    "expectedPlatform": "music_joox",
+    "expectedType": "audio"
+  },
+  {
+    "platformKey": "music_kugou",
+    "sampleURL": "https://www.kugou.com/yy/special/single/3280341.html",
+    "enabled": true,
+    "expectedPlatform": "music_kugou",
+    "expectedType": "audio"
+  },
+  {
+    "platformKey": "music_kuwo",
+    "sampleURL": "https://www.kuwo.cn/playlist_detail/2358858706",
+    "enabled": true,
+    "expectedPlatform": "music_kuwo",
+    "expectedType": "audio"
+  },
+  {
+    "platformKey": "music_migu",
+    "sampleURL": "https://music.migu.cn/v5/#/playlist?playlistId=228114498&playlistType=ordinary",
+    "enabled": true,
+    "expectedPlatform": "music_migu",
+    "expectedType": "audio"
+  },
+  {
+    "platformKey": "music_netease",
+    "sampleURL": "https://music.163.com/#/playlist?id=3039971654",
+    "enabled": true,
+    "expectedPlatform": "music_netease",
+    "expectedType": "audio"
+  },
+  {
+    "platformKey": "music_qianqian",
+    "sampleURL": "https://music.91q.com/songlist/295893",
+    "enabled": true,
+    "expectedPlatform": "music_qianqian",
+    "expectedType": "audio"
+  },
+  {
+    "platformKey": "music_qobuz",
+    "sampleURL": "https://open.qobuz.com/playlist/22318381",
+    "enabled": true,
+    "expectedPlatform": "music_qobuz",
+    "expectedType": "audio"
+  },
+  {
+    "platformKey": "music_qq",
+    "sampleURL": "https://y.qq.com/n/ryqq_v2/playlist/8740590963",
+    "enabled": true,
+    "expectedPlatform": "music_qq",
+    "expectedType": "audio"
+  },
+  {
+    "platformKey": "music_soda",
+    "sampleURL": "https://qishui.douyin.com/s/iHFSgNKw/",
+    "enabled": true,
+    "expectedPlatform": "music_soda",
+    "expectedType": "audio"
+  },
+  {
+    "platformKey": "music_soundcloud",
+    "sampleURL": "https://soundcloud.com/pandadub/sets/the-lost-ship",
+    "enabled": true,
+    "expectedPlatform": "music_soundcloud",
+    "expectedType": "audio"
+  },
+  {
+    "platformKey": "music_spotify",
+    "sampleURL": "https://open.spotify.com/playlist/37i9dQZF1E8NWHOpySOxQd",
+    "enabled": true,
+    "expectedPlatform": "music_spotify",
+    "expectedType": "audio"
+  },
+  {
+    "platformKey": "music_streetvoice",
+    "sampleURL": "https://www.streetvoice.cn/morgan22/playlists/436444/",
+    "enabled": true,
+    "expectedPlatform": "music_streetvoice",
+    "expectedType": "audio"
+  },
+  {
+    "platformKey": "music_tidal",
+    "sampleURL": "https://tidal.com/playlist/a94e7dce-da66-413d-81a5-990328afa3c9",
+    "enabled": true,
+    "expectedPlatform": "music_tidal",
+    "expectedType": "audio"
+  },
+  {
+    "platformKey": "open163",
+    "sampleURL": "https://open.163.com/newview/movie/free?pid=WIAL798Q9&mid=BIAL799D2",
+    "enabled": true,
+    "expectedPlatform": "open163",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "people",
+    "sampleURL": "http://v.people.cn/n1/2026/0421/c431305-40705569.html",
+    "enabled": true,
+    "expectedPlatform": "people",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "pipigaoxiao",
+    "sampleURL": "https://h5.pipigx.com/pp/post/808595934847",
+    "enabled": true,
+    "expectedPlatform": "pipigaoxiao",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "pipixia",
+    "sampleURL": "https://h5.pipix.com/item/7111320087503575303",
+    "enabled": true,
+    "expectedPlatform": "pipixia",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "playerpl",
+    "sampleURL": "https://player.pl/filmy-online/1800-gramow,169874",
+    "enabled": true,
+    "expectedPlatform": "playerpl",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "plusfifa",
+    "sampleURL": "https://www.plus.fifa.com/en/player/580e692e-e8fc-4ad1-a649-5ec0af83f94d?catalogId=5f24e303-ff42-499f-9d7a-b4f8e0eff2ce",
+    "enabled": true,
+    "expectedPlatform": "plusfifa",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "qqvideo",
+    "sampleURL": "https://v.qq.com/x/page/l3502vppd13.html",
+    "enabled": true,
+    "expectedPlatform": "qqvideo",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "quanmin",
+    "sampleURL": "https://xspshare.baidu.com/sv?source=share-h5&pd=qm_share_mvideo&vid=3712722043658570249",
+    "enabled": true,
+    "expectedPlatform": "quanmin",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "quanminkge",
+    "sampleURL": "https://kg.qq.com/node/play?s=d-GYCadMOClC7d_0&shareuid=64959a822728338a32&topsource=a0_pn201001006_z1_u687725416_l1_t1579315797__",
+    "enabled": true,
+    "expectedPlatform": "quanminkge",
+    "expectedType": "audio"
+  },
+  {
+    "platformKey": "redbook",
+    "sampleURL": "http://xhslink.com/a/ELECa0m0DXccb",
+    "enabled": true,
+    "expectedPlatform": "redbook",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "reddit",
+    "sampleURL": "https://www.reddit.com/r/videos/comments/6rrwyj/that_small_heart_attack/",
+    "enabled": true,
+    "expectedPlatform": "reddit",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "rutube",
+    "sampleURL": "https://rutube.ru/video/381e239f73b2d475bc0c2e459f531abb/",
+    "enabled": true,
+    "expectedPlatform": "rutube",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "sina",
+    "sampleURL": "http://video.sina.com.cn/view/250587748.html",
+    "enabled": true,
+    "expectedPlatform": "sina",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "sixroom",
+    "sampleURL": "https://v.6.cn/minivideo/2716610",
+    "enabled": true,
+    "expectedPlatform": "sixroom",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "sohu",
+    "sampleURL": "http://my.tv.sohu.com/us/335942214/399571612.shtml",
+    "enabled": true,
+    "expectedPlatform": "sohu",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "tbnuk",
+    "sampleURL": "https://watch.tbn.uk/watch/vod/52157303/identity-and-belonging",
+    "enabled": true,
+    "expectedPlatform": "tbnuk",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "ted",
+    "sampleURL": "https://www.ted.com/talks/alanna_shaikh_why_covid_19_is_hitting_us_now_and_how_to_prepare_for_the_next_outbreak",
+    "enabled": true,
+    "expectedPlatform": "ted",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "tiktok",
+    "sampleURL": "https://www.tiktok.com/@nathanharenice/video/7413042588074200326",
+    "enabled": true,
+    "expectedPlatform": "tiktok",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "twitter",
+    "sampleURL": "https://x.com/Eminem/status/943590594491772928",
+    "enabled": true,
+    "expectedPlatform": "twitter",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "unity",
+    "sampleURL": "https://learn.unity.com/course/2d-beginner-game-sprite-flight/tutorial/set-up-your-2d-game-world?version=6.0",
+    "enabled": true,
+    "expectedPlatform": "unity",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "vimeo",
+    "sampleURL": "https://vimeo.com/76979871",
+    "enabled": true,
+    "expectedPlatform": "vimeo",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "weibo",
+    "sampleURL": "https://h5.video.weibo.com/show/1034:4915132212641842",
+    "enabled": true,
+    "expectedPlatform": "weibo",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "weishi",
+    "sampleURL": "https://video.weishi.qq.com/vfD4rz6U",
+    "enabled": true,
+    "expectedPlatform": "weishi",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "wesing",
+    "sampleURL": "https://kg.qq.com/node/user/bb132c338e/song/play-edLkcwAsRj?s=bCyoDlbCUhcjXbkQ&shareuid=&topsource=znxvljkwehoit_rqojkwehfguioqef_fnajkgfb&g_f=",
+    "enabled": true,
+    "expectedPlatform": "wesing",
+    "expectedType": "audio"
+  },
+  {
+    "platformKey": "wittytv",
+    "sampleURL": "https://www.wittytv.it/amici/giovedi-22-gennaio-il-quotidiano-di-amici/",
+    "enabled": true,
+    "expectedPlatform": "wittytv",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "wwe",
+    "sampleURL": "https://www.wwe.com/videos/daniel-bryan-vs-andrade-cien-almas-smackdown-live-sept-4-2018",
+    "enabled": true,
+    "expectedPlatform": "wwe",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "www163",
+    "sampleURL": "https://www.163.com/v/video/VDHQNAVSD.html?clickfrom=video_like",
+    "enabled": true,
+    "expectedPlatform": "www163",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "xigua",
+    "sampleURL": "https://www.ixigua.com/7359024563227656714",
+    "enabled": true,
+    "expectedPlatform": "xigua",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "xinhuanet",
+    "sampleURL": "https://www.news.cn/fortune/20260409/01e2ba78799248769b889746e9a5bbe5/c.html",
+    "enabled": true,
+    "expectedPlatform": "xinhuanet",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "xinpianchang",
+    "sampleURL": "",
+    "enabled": false,
+    "expectedPlatform": "xinpianchang",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "xuexicn",
+    "sampleURL": "https://www.xuexi.cn/lgpage/detail/index.html?id=6898516301450608472",
+    "enabled": true,
+    "expectedPlatform": "xuexicn",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "yinyuetai",
+    "sampleURL": "https://www.yinyuetai.com/watch/7200480383631265792?listType=swiper&listId=6998475633361805312",
+    "enabled": true,
+    "expectedPlatform": "yinyuetai",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "youku",
+    "sampleURL": "https://v.youku.com/v_show/id_XNDU1MTg1NjM2OA==",
+    "enabled": true,
+    "expectedPlatform": "youku",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "youtube",
+    "sampleURL": "https://www.youtube.com/watch?v=oGsXa6slchc&t=2s",
+    "enabled": true,
+    "expectedPlatform": "youtube",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "zhihu",
+    "sampleURL": "https://www.zhihu.com/zvideo/1342930761977176064",
+    "enabled": true,
+    "expectedPlatform": "zhihu",
+    "expectedType": "video"
+  },
+  {
+    "platformKey": "zuiyou",
+    "sampleURL": "https://share.xiaochuankeji.cn/hybrid/share/post?pid=407260908&vid=2492069614&zy_to=applink&share_count=1&m=72986390f8e3651c01fe06c56bccfb56&d=1eed7b49c0a6141fa1913307c450274fa5878ca53265df2c35e2f4fce0bffbfa&app=zuiyou&recommend=r0&name=n0&title_type=t0",
+    "enabled": true,
+    "expectedPlatform": "zuiyou",
+    "expectedType": "video"
+  }
+]

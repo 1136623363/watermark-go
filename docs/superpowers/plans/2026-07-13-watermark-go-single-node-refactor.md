@@ -1522,7 +1522,7 @@ git commit -m "feat: add bounded download and m3u8 tasks"
   样本；否则明确记录 `coverage clue not adopted`，不得生成空壳证据）
 - 读取、验证并更新：`docs/baseline-provenance.json`（仅在 Task 10 生成 fixture 并独立审查后写入 trust anchor）
 
-- [ ] **步骤 1：编写后台认证、RBAC 和批次口径测试**
+- [x] **步骤 1：编写后台认证、RBAC 和批次口径测试**
 
 测试未登录 401、viewer 不能写、owner 危险操作需要确认 header、审计落库。认证矩阵锁定：MySQL
 配置后查询错误/用户不存在都 fail closed；environment 认证只允许无 MySQL 的 development/test；
@@ -1534,13 +1534,15 @@ breakglass 必须显式开关和强密码。cookie HMAC payload 签名 `mysql|en
 MySQL 历史结果，仍断言 93 个 enabled 样本每项本轮实际调用 parser；连续三轮使用独立 run ID，
 各自 `completed=93` 且独立墙钟不超过 216 秒，不能复用 fixture 自报 SHA 或历史结果伪装执行。
 
-- [ ] **步骤 2：确认失败**
+- [x] **步骤 2：确认失败**
 
 运行：`go test ./internal/admin ./internal/httpapi -run 'TestAdmin|TestBaseline' -count=1`
 
 预期：FAIL。
 
-- [ ] **步骤 3：迁移单机后台能力**
+结果：按预期失败，`internal/admin` 还没有实现，HTTP 管理契约也缺少 `AdminHandlers`。
+
+- [x] **步骤 3：迁移单机后台能力**
 
 保留摘要、解析、结果库、请求、日志、诊断、设置、工具状态、样本和平台运行；不注册集群节点、
 内部平台 worker 和跨节点下载接口。把已前置修复的 MySQL fail-closed、显式 breakglass、受签名 auth
@@ -1548,7 +1550,11 @@ mode/禁止模式升级、旧 cookie 失效测试迁入 `internal/admin/auth_tes
 所有管理写 handler 统一经过 RBAC + CSRF/Origin + audit middleware。`/api/profile` 保持明确
 `1002 unsupported`。
 
-- [ ] **步骤 4：导出版本化样本 manifest**
+已实现 `internal/admin` 的 MySQL fail-closed、development/test environment auth、显式 breakglass、
+mode-bound HMAC cookie、owner/viewer RBAC、CSRF/Origin 检查、审计记录、summary/settings/profile
+单机后台 handler，以及固定并发 3、cache/history bypass、逐样本 parser invocation ID 的 baseline runner。
+
+- [x] **步骤 4：导出版本化样本 manifest**
 
 先精确验证 `docs/baseline-provenance.json`：批准源 commit/tree、`测试结果基准.md` SHA-256
 `a470a87e64242e5e97ee1a03571c43198a6bd7036c0b756e8c69fd9b639df29a`，以及 5 个 catalog 输入按
@@ -1580,7 +1586,26 @@ broad HostRule 改成完整 exact alias 集合的可行性，特别把 `m.weibo.
 `m.oasis.weibo.cn`（绿洲）的语义冲突作为必测负例；任何收紧都必须证明不减少固定 41-domain/93 样本
 兼容覆盖后再单独更新 golden。
 
-- [ ] **步骤 5：验证**
+已从本地 `/srv/watermark/watermark-backend` 固定 commit
+`1d3dc9a6064f3f2e41af9ea92a29566885939175` 导出 `tests/baseline/fixtures/platform-samples.json`：
+96 条、93 enabled、disabled 为 `doupai/huoshan/xinpianchang`，按 `platformKey` 排序。独立复算：
+
+```bash
+sha256sum /srv/watermark/watermark-backend/测试结果基准.md
+# a470a87e64242e5e97ee1a03571c43198a6bd7036c0b756e8c69fd9b639df29a
+
+sha256(filename + NUL + source-commit file bytes, in listed order)
+# 05d832a7d59897d16cd4bd26a7d02d6f6bdf5ec6829c1a280e974579fa29bf6a
+
+sha256sum tests/baseline/fixtures/platform-samples.json
+# bb0f55ea17ddc613f64282a5786a7ab137a945a847b444fdd2f4bfb212bc5eba
+```
+
+`docs/baseline-provenance.json` 已写入 canonical fixture path/hash；未创建
+`tests/research/media-parser/`，evidence 明确 `coverage clue not adopted`，ucmao/media-parser 研究仍不参与
+baseline trust anchor。
+
+- [x] **步骤 5：验证**
 
 运行：
 
@@ -1591,7 +1616,21 @@ GOMAXPROCS=2 go test ./internal/parser/... ./internal/policy -count=1
 
 预期：全部 PASS。
 
-- [ ] **步骤 6：Commit**
+结果：
+
+```bash
+go test ./internal/admin ./internal/httpapi -run 'TestAdmin|TestBaseline' -count=1
+GOMAXPROCS=2 go test ./internal/admin ./internal/httpapi -count=1
+GOMAXPROCS=2 go test ./internal/parser/... ./internal/policy -count=1
+GOMAXPROCS=2 go test ./... -count=1
+go vet ./...
+git diff --check
+go test ./internal/policy -run TestRepositorySecurityAuditCoversIndexWorktreeHistoryAndRefs -count=1
+```
+
+全部通过；期间未运行 Docker/Buildx/镜像构建命令。
+
+- [x] **步骤 6：Commit**
 
 ```bash
 git add internal/admin internal/httpapi/admin_handlers.go internal/httpapi/admin_contract_test.go \
