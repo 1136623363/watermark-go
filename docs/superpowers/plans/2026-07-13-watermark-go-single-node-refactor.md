@@ -1080,7 +1080,7 @@ git commit -m "refactor: add durable stores and degradable cache"
 - 创建：`internal/httpapi/client_handlers.go`
 - 创建：`internal/httpapi/client_handlers_test.go`
 
-- [ ] **步骤 1：编写当前前端契约测试**
+- [x] **步骤 1：编写当前前端契约测试**
 
 测试空微信 code 的开发身份、稳定 UID、token 过期、`token` header、Bearer 兼容，以及
 无效 token 用 HTTP 200 返回 `code=1008`。另外覆盖安全熵失败时 identity/session 均零写、微信
@@ -1091,6 +1091,10 @@ transport/status/body/JSON/业务拒绝错误只能产生固定脱敏响应与�
 登录 code 与应用密钥不能进入 parser `Dependencies`、Fetcher header、普通 parse cache 或 parser upstream
 session material；客户端 session 与 Task 3 的平台短期材料是两个互不转换、互不共享 key-space 的边界。
 
+已覆盖：`internal/auth/client_test.go` 验证空 code + `clientId` 开发身份、稳定 `uid`、TTL 过期、
+`token`/Bearer 兼容、熵失败零写、微信 transport/status/body/JSON/business 脱敏分类、identity metadata
+禁止 `session_key`；`internal/httpapi/client_handlers_test.go` 验证无效 token 的 HTTP 200/`1008` 前端刷新契约。
+
 ```go
 func TestInvalidTokenUsesFrontendRefreshContract(t *testing.T) {
     res := postJSON(t, router, "/api/parse", `{"url":"https://example.com/v"}`, header("token", "bad"))
@@ -1099,13 +1103,16 @@ func TestInvalidTokenUsesFrontendRefreshContract(t *testing.T) {
 }
 ```
 
-- [ ] **步骤 2：确认失败**
+- [x] **步骤 2：确认失败**
 
 运行：`go test ./internal/auth ./internal/httpapi -run 'TestClient|TestInvalidToken' -count=1`
 
 预期：FAIL。
 
-- [ ] **步骤 3：实现 session**
+证据：实现前运行该命令，结果为 `FAIL ./internal/auth [setup failed]` 与
+`FAIL ./internal/httpapi [setup failed]`（新包尚无 Go 实现文件），确认红测阶段成立。
+
+- [x] **步骤 3：实现 session**
 
 token 使用 256 位安全随机值的 SHA-256 摘要落库，响应只返回明文一次；默认 TTL 30 天。随机值必须
 在任何 identity/session 写入前成功生成，熵源失败返回固定 `code=1008` 且两类状态均为零写，禁止
@@ -1114,18 +1121,38 @@ openid，测试/开发允许空 code 的 clientId 身份。微信上游 transpor
 边界内归类，handler 只返回固定通用错误，日志不格式化原始 error/request URL/code；上游
 `session_key` 仅用于本次交换，既不进入 identity metadata，也不落库或写日志。
 
-- [ ] **步骤 4：验证**
+已实现：`internal/auth` 提供注入式 `Store`、熵源、clock、WeChat exchanger 与固定分类日志；token
+由 32 字节安全随机值生成，落库/内存仅保存 SHA-256 摘要；`AuthenticatedClient.ParserContext()` 只暴露
+`userId/uid/publicId/programType`，不携带 token、openid、login code、微信应用密钥或 `session_key`。
+`internal/httpapi` 提供客户端 session 与 parse 鉴权 handler，失效 token 统一返回
+`{"code":1008,"msg":"登录状态已失效，请重试"}`。
+
+- [x] **步骤 4：验证**
 
 运行：`go test ./internal/auth ./internal/httpapi -run 'TestClient|TestInvalidToken' -count=1`
 
 预期：全部 PASS。
 
-- [ ] **步骤 5：Commit**
+证据：
+
+```bash
+go test ./internal/auth ./internal/httpapi -run 'TestClient|TestInvalidToken' -count=1
+go test ./internal/auth ./internal/httpapi -count=1
+GOMAXPROCS=2 go test ./... -count=1
+go vet ./...
+git diff --check
+```
+
+结果：全部通过；期间未运行 Docker/Buildx/镜像构建命令。
+
+- [x] **步骤 5：Commit**
 
 ```bash
 git add internal/auth internal/httpapi/client_handlers.go internal/httpapi/client_handlers_test.go
 git commit -m "feat: implement mini program session authentication"
 ```
+
+已提交：`feat: implement mini program session authentication`。
 
 ## 任务 7：实现同步解析用例与响应兼容层
 
