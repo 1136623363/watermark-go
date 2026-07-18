@@ -16,7 +16,9 @@ type DownloadService interface {
 	GetFallback(context.Context, string, string) (download.TaskView, bool, error)
 	CreateM3U8(context.Context, download.M3U8Request) (download.TaskView, error)
 	GetM3U8(context.Context, string) (download.TaskView, bool, error)
+	ValidateDownloadTicket(context.Context, string, string) error
 	ValidateFileTicket(context.Context, string, string) error
+	ServeTaskFile(http.ResponseWriter, *http.Request, string) error
 }
 
 type DownloadHandlers struct {
@@ -37,6 +39,7 @@ type m3u8MergeRequest struct {
 func (handlers DownloadHandlers) Register(router gin.IRouter) {
 	router.POST("/api/download/fallback", handlers.CreateFallback)
 	router.GET("/api/download/fallback/:id", handlers.GetFallback)
+	router.GET("/api/download/file/:id", handlers.GetFallbackFile)
 	router.POST("/api/m3u8/merge", handlers.CreateM3U8)
 	router.GET("/api/task/:id", handlers.GetM3U8)
 	router.GET("/api/task/file/:id", handlers.GetM3U8File)
@@ -134,16 +137,36 @@ func (handlers DownloadHandlers) GetM3U8(c *gin.Context) {
 	c.JSON(http.StatusOK, Response{Code: 0, Msg: "ok", Data: m3u8Data(view)})
 }
 
+func (handlers DownloadHandlers) GetFallbackFile(c *gin.Context) {
+	if handlers.Service == nil {
+		c.JSON(http.StatusForbidden, Response{Code: 1008, Msg: "invalid download ticket"})
+		return
+	}
+	taskID := strings.TrimSpace(c.Param("id"))
+	if err := handlers.Service.ValidateDownloadTicket(c.Request.Context(), taskID, strings.TrimSpace(c.Query("ticket"))); err != nil {
+		c.JSON(http.StatusForbidden, Response{Code: 1008, Msg: "invalid download ticket"})
+		return
+	}
+	if err := handlers.Service.ServeTaskFile(c.Writer, c.Request, taskID); err != nil {
+		c.JSON(http.StatusNotFound, Response{Code: 1004, Msg: "download file not found"})
+		return
+	}
+}
+
 func (handlers DownloadHandlers) GetM3U8File(c *gin.Context) {
 	if handlers.Service == nil {
 		c.JSON(http.StatusForbidden, Response{Code: 1008, Msg: "invalid download ticket"})
 		return
 	}
-	if err := handlers.Service.ValidateFileTicket(c.Request.Context(), strings.TrimSpace(c.Param("id")), strings.TrimSpace(c.Query("ticket"))); err != nil {
+	taskID := strings.TrimSpace(c.Param("id"))
+	if err := handlers.Service.ValidateFileTicket(c.Request.Context(), taskID, strings.TrimSpace(c.Query("ticket"))); err != nil {
 		c.JSON(http.StatusForbidden, Response{Code: 1008, Msg: "invalid download ticket"})
 		return
 	}
-	c.JSON(http.StatusOK, Response{Code: 0, Msg: "ok"})
+	if err := handlers.Service.ServeTaskFile(c.Writer, c.Request, taskID); err != nil {
+		c.JSON(http.StatusNotFound, Response{Code: 1004, Msg: "m3u8 file not found"})
+		return
+	}
 }
 
 func viewHasCreateURL(view download.TaskView) bool {

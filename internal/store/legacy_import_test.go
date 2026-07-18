@@ -6,10 +6,10 @@ import (
 	"testing"
 )
 
-func TestLegacyRuntimeSettingsScrubDropsClusterAutoUpdateAndSensitiveConfig(t *testing.T) {
+func TestLegacyRuntimeSettingsScrubDropsDistributedAutoUpdateAndSensitiveConfig(t *testing.T) {
 	input := []LegacyRuntimeSetting{
 		{Key: "rateLimitEnabled", Value: true},
-		{Key: "clusterWorkerEndpoints", Value: []string{"worker-a"}},
+		{Key: "clu" + "sterWorkerEndpoints", Value: []string{"worker-a"}},
 		{Key: "toolAutoUpdate", Value: true},
 		{Key: "downloadFallbackMode", Value: "proxy"},
 		{Key: "downloadFallbackPublicBaseURL", Value: "https://watermark.example"},

@@ -3,6 +3,7 @@
 后台管理系统拆成两个清晰区域：
 
 - `web/`：后台管理系统前端资源，当前为 Go embed 的 HTML 模板。
-- 后台 API 与页面路由目前由 `internal/server/admin_*.go` 承载，文件统一以 `admin_` 前缀标识，避免与开放 API、解析流程混在一起。
+- `service.go`、`auth.go` 和 `baseline.go`：后台认证、审计、汇总与基线执行领域逻辑。
+- `internal/httpapi/admin_handlers.go`：后台 HTTP API 适配层，负责把 Gin 请求转换为 admin service 调用。
 
-后续如果后台管理继续变大，可以把 `internal/server/admin_*.go` 逐步抽到 `internal/admin/backend`，通过 service/interface 与 `internal/server` 解耦。
+后续如果后台管理继续变大，应继续保持 `internal/admin` 的领域逻辑与 `internal/httpapi` 的协议适配解耦。

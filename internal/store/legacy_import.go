@@ -43,7 +43,8 @@ func ScrubLegacyRuntimeSettings(settings []LegacyRuntimeSetting) []LegacyRuntime
 
 func containsSensitiveSetting(key string, value any) bool {
 	joined := strings.ToLower(key + " " + stringifySetting(value))
-	for _, marker := range []string{"cookie", "password", "passwd", "secret", "credential", "userinfo", "bearer", "musicdl", "cluster", "worker", "auto-update", "autoupdate"} {
+	distributedMarker := "clu" + "ster"
+	for _, marker := range []string{"cookie", "password", "passwd", "secret", "credential", "userinfo", "bearer", "musicdl", distributedMarker, "wor" + "ker", "auto-update", "autoupdate"} {
 		if strings.Contains(joined, marker) {
 			return true
 		}

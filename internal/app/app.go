@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/1136623363/watermark-go/internal/config"
-	"github.com/1136623363/watermark-go/internal/server"
+	"github.com/1136623363/watermark-go/internal/httpapi"
 )
 
 const DefaultShutdownTimeout = 20 * time.Second
@@ -56,7 +56,7 @@ type lifecycleEvent struct {
 
 func New(cfg config.Config, supplied ...Option) (*App, error) {
 	settings := options{
-		components:      []Component{server.New(cfg)},
+		components:      []Component{httpapi.NewServerFromConfig(cfg, httpapi.Router(httpapi.RouterOptions{}))},
 		shutdownTimeout: DefaultShutdownTimeout,
 	}
 	for _, option := range supplied {

@@ -2,6 +2,8 @@
 
 本目录承载 watermark-go 的 Go 契约测试、pytest 服务端到端测试、解析基准门禁和运维脚本测试。测试必须明确区分“通过”“失败”和“依赖未就绪”；不得把未执行或跳过关键依赖伪装为成功。
 
+当前 Task 11 已补入单机 HTTP 路由、请求 ID、CORS、服务超时、下载流式 idle 保护和匿名 performance 采集的 Go 测试。后续 Task 12 会把这些能力扩展为前端契约与运行中服务的 E2E 验收。
+
 ## 目标结构
 
 - `contracts/frontend_contract_test.go`：锁定当前小程序的 session、同步/异步解析、分享缓存、下载兜底、m3u8 与 performance 协议。

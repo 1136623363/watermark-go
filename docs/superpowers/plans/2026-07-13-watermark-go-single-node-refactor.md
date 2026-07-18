@@ -1661,7 +1661,7 @@ git commit -m "refactor: add single-node admin and baseline runner"
 - 修改：`internal/policy/network_egress_test.go` 及所有路径绑定的 parser/network policy（删除
   `internal/server`/`internal/runtimecfg` 前先让 stale allowlist 自审计失败，再迁移到新精确 owner）
 
-- [ ] **步骤 1：编写 route inventory、request ID、CORS 和超时测试**
+- [x] **步骤 1：编写 route inventory、request ID、CORS 和超时测试**
 
 ```go
 func TestRequiredFrontendRoutesRegistered(t *testing.T) {
@@ -1686,20 +1686,34 @@ session/parse/fallback 入口覆盖 token/Bearer 两种形态。表格测试逐�
 缺/坏/过期/错用途 ID 或 ticket、
 限流和 SSRF 拒绝。
 
-- [ ] **步骤 2：确认失败**
+结果：新增 `internal/httpapi/router_test.go` 与 `internal/observability/client_performance_test.go`，覆盖
+required frontend routes、禁止跨节点/内部 worker 路由、request ID/CORS/health payload、HTTP server
+timeouts、下载流式 idle seam、JSON request log 不泄漏 request material、performance 端点匿名/16 KiB/body
+bounded/non-blocking/drop counting，以及 fallback/m3u8 final file ticket purpose 行为。
+
+- [x] **步骤 2：确认失败**
 
 运行：`go test ./internal/httpapi ./internal/observability -count=1`
 
 预期：FAIL。
 
-- [ ] **步骤 3：实现中间件和 HTTP Server**
+结果：测试在实现前因缺少 `Router` 与 `observability` 包失败；随后进入实现。
+
+- [x] **步骤 3：实现中间件和 HTTP Server**
 
 接受/生成 32 位十六进制 request ID 并回显；CORS 允许并暴露前端所需 headers；
 Gin 不信任任意代理。Server 设置 10 秒 ReadHeader、20 秒 Read、40 秒 Write、60 秒 Idle，
 下载流和任务轮询使用专用响应路径；streaming handler 自己施加 idle/progress deadline、总字节和总时长
 上限，不继承会在 40 秒截断合法慢流的普通响应 WriteTimeout。
 
-- [ ] **步骤 4：实现非阻塞性能遥测**
+结果：`internal/httpapi/router.go`、`response.go`、`middleware.go` 完成单机 Router/Server 组合；
+`internal/app/app.go` 改为通过 `httpapi.NewServerFromConfig` 启动；Server 默认
+ReadHeader/Read/Write/Idle timeout 分别为 10s/20s/40s/60s，request ID 接受/生成 32 hex 并回显，
+CORS 允许并暴露前端所需 headers，Gin 不信任任意代理。下载最终文件路由补齐
+`/api/download/file/:id` 和 `/api/task/file/:id`，分别校验 download/m3u8_file purpose ticket 后委托
+download service 出文件。
+
+- [x] **步骤 4：实现非阻塞性能遥测**
 
 `POST /api/client/performance` 允许匿名，限制 body 16 KiB，写入有界 channel；channel 满时丢弃并计数，
 5 秒前端超时内立即返回。
@@ -1709,7 +1723,12 @@ Cookie/token、上游 body/error 不得写入日志。指标按相同低基数�
 不得把 URL、用户/任务 capability 或任意 error string 作为 label。捕获日志测试逐类注入 sentinel 并断言
 响应、日志和指标均不泄漏。
 
-- [ ] **步骤 5：删除旧聚合包、运行时集群配置和界面**
+结果：`internal/observability/client_performance.go` 提供匿名、16 KiB 限额、有界 channel 与 drop counting；
+`internal/observability/log.go` 只输出 request/task ID、platform、parser、stage、attempt、cache、fallback、
+typed error kind、durationMs 等稳定字段。Router 可选接入 JSON logger，中间件只记录 request ID、stage、
+typed status class 和 duration，不记录 URL/path/query、Cookie、Authorization 或上游原文。
+
+- [x] **步骤 5：删除旧聚合包、运行时集群配置和界面**
 
 只有步骤 1 新增的 route inventory、request ID、CORS、timeout 和 performance 测试已经提交到工作树，
 并且新 `internal/httpapi`/`internal/observability` 实现使这些测试转绿后，才允许删除旧包。不得先删
@@ -1719,7 +1738,12 @@ Cookie/token、上游 body/error 不得写入日志。指标按相同低基数�
 
 旧根 Compose、旧 Nginx 入口、worker Compose、Jenkinsfile 和可变上游同步脚本已在任务 2 前的安全纠偏中删除；本步骤只用 `test ! -e` 条件验证它们仍不存在，不执行会因文件已经缺失而失败的 `git rm`。
 
-- [ ] **步骤 6：验证**
+结果：在新 `internal/httpapi`/`internal/observability` 定向测试转绿后，删除 `internal/server/`、
+`internal/runtimecfg/` 和 `docs/集群化部署方案.md`；将
+`docs/多节点解析性能排查与优化.md` 与旧 CDN 方案移入 `docs/archive/`，并给多节点性能文档添加历史归档头。
+后台 `index.html` 收敛为单机首页，README、tests README 和普通架构文档同步到当前单机 HTTP 结构。
+
+- [x] **步骤 6：验证**
 
 运行：
 
@@ -1739,7 +1763,24 @@ test ! -e scripts/sync-universal-parser.ps1
 
 预期：测试 PASS；生产代码、模板、部署、脚本、README 与普通文档中大小写不敏感扫描无禁止架构/流水线命中。`internal/policy/` 必须为门禁规则命名禁止项，`docs/archive/` 和三份治理文档（设计、计划、追踪矩阵）用于记录历史决策；它们构成显式白名单，不得被生产入口引用。
 
-- [ ] **步骤 7：Commit**
+结果：
+
+```bash
+go test ./internal/httpapi ./internal/observability -count=1
+go test ./internal/download ./internal/httpapi ./internal/observability -count=1
+GOMAXPROCS=2 go test ./internal/httpapi ./internal/observability ./internal/app ./internal/download ./internal/store -count=1
+GOMAXPROCS=2 go test ./internal/policy -count=1
+GOMAXPROCS=2 go test ./... -count=1
+go vet ./...
+git diff --check
+git grep -niE 'cluster|jenkins|集群|worker endpoint' -- cmd internal deploy scripts README.md tests/README.md docs ':!internal/policy/**' ':!docs/archive/**' ':!docs/superpowers/**' ':!docs/requirements-traceability.md'
+test ! -e docker-compose.yml && test ! -e docker-compose.prod.yml && test ! -e deploy/nginx/watermark-backend.conf && test ! -e scripts/sync-universal-parser.sh && test ! -e scripts/sync-universal-parser.ps1
+go test ./internal/policy -run TestRepositorySecurityAuditCoversIndexWorktreeHistoryAndRefs -count=1
+```
+
+全部通过；禁词扫描无命中（退出码 1 为未找到），旧部署文件不存在；期间未运行 Docker/Buildx/镜像构建命令。
+
+- [x] **步骤 7：Commit**
 
 ```bash
 git add internal/httpapi internal/observability internal/app internal/policy

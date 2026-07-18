@@ -263,6 +263,17 @@ func (service *Service) ValidateFileTicket(_ context.Context, taskID string, tic
 	return nil
 }
 
+func (service *Service) ValidateDownloadTicket(_ context.Context, taskID string, ticket string) error {
+	claims, err := VerifyTicket(service.signingKey, ticket, PurposeDownload, service.clock())
+	if err != nil {
+		return err
+	}
+	if claims.TaskID != strings.TrimSpace(taskID) {
+		return ErrInvalidTicket
+	}
+	return nil
+}
+
 func (service *Service) AcquireTransfer(ctx context.Context, clientID string) (func(), error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err

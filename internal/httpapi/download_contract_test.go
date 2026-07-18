@@ -103,6 +103,31 @@ func TestDownloadTicketsRequiredOnlyForFinalFiles(t *testing.T) {
 	if fileWithWrongPurpose.Code != http.StatusForbidden {
 		t.Fatalf("file with wrong-purpose ticket status = %d body=%s, want 403", fileWithWrongPurpose.Code, fileWithWrongPurpose.Body.String())
 	}
+
+	fileWithTicket := performDownloadRequest(router, http.MethodGet, "/api/task/file/m3u8_task?ticket=file")
+	if fileWithTicket.Code != http.StatusOK || fileWithTicket.Body.String() != "file:m3u8_task" {
+		t.Fatalf("file with ticket response = %d %q, want file body", fileWithTicket.Code, fileWithTicket.Body.String())
+	}
+}
+
+func TestFallbackDownloadFileRequiresDownloadPurposeTicket(t *testing.T) {
+	service := &fakeDownloadService{}
+	router := newDownloadRouter(service)
+
+	missingTicket := performDownloadRequest(router, http.MethodGet, "/api/download/file/fallback_task")
+	if missingTicket.Code != http.StatusForbidden {
+		t.Fatalf("fallback file missing ticket status = %d body=%s, want 403", missingTicket.Code, missingTicket.Body.String())
+	}
+
+	wrongPurpose := performDownloadRequest(router, http.MethodGet, "/api/download/file/fallback_task?ticket=file")
+	if wrongPurpose.Code != http.StatusForbidden {
+		t.Fatalf("fallback file wrong-purpose ticket status = %d body=%s, want 403", wrongPurpose.Code, wrongPurpose.Body.String())
+	}
+
+	withTicket := performDownloadRequest(router, http.MethodGet, "/api/download/file/fallback_task?ticket=download")
+	if withTicket.Code != http.StatusOK || withTicket.Body.String() != "file:fallback_task" {
+		t.Fatalf("fallback file response = %d %q, want file body", withTicket.Code, withTicket.Body.String())
+	}
 }
 
 func performDownloadRequest(router *gin.Engine, method, path string) *httptest.ResponseRecorder {
@@ -177,6 +202,21 @@ func (service *fakeDownloadService) ValidateFileTicket(_ context.Context, id str
 	if id == "" || ticket != "file" {
 		return download.ErrInvalidTicket
 	}
+	return nil
+}
+
+func (service *fakeDownloadService) ValidateDownloadTicket(_ context.Context, id string, ticket string) error {
+	if id == "" || ticket != "download" {
+		return download.ErrInvalidTicket
+	}
+	return nil
+}
+
+func (service *fakeDownloadService) ServeTaskFile(writer http.ResponseWriter, _ *http.Request, id string) error {
+	if id == "" {
+		return download.ErrTaskNotFound
+	}
+	_, _ = writer.Write([]byte("file:" + id))
 	return nil
 }
 

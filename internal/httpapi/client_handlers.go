@@ -13,12 +13,6 @@ import (
 
 const invalidTokenCode = 1008
 
-type Response struct {
-	Code int    `json:"code"`
-	Msg  string `json:"msg"`
-	Data any    `json:"data,omitempty"`
-}
-
 type ParseRequest struct {
 	URL          string `json:"url"`
 	ForceRefresh bool   `json:"forceRefresh,omitempty"`
