@@ -259,6 +259,47 @@ func TestLoadSingleNodeDefaultsAndParserCookies(t *testing.T) {
 	}
 }
 
+func TestLoadDataGateConfigAtMigrationBoundary(t *testing.T) {
+	values := map[string]string{
+		"APP_ENV":                  "test",
+		"GATE_MODE":                "revalidate",
+		"GATE_RECEIPT_PATH":        "/run/watermark/gate/receipt.json",
+		"GATE_ROLE":                "recovery",
+		"GATE_DATA_STAGE":          "final",
+		"IMAGE_DIGEST":             "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"DEPLOYMENT_RUN_ID":        "run-123",
+		"GATE_ATTEMPT_ID":          "attempt-1",
+		"GATE_SCHEMA_STATE":        "schema-012",
+		"GATE_TARGET_DB_IDENTITY":  "mysql-final",
+		"GATE_REDIS_IDENTITY":      "redis-final",
+		"GATE_OUTBOX_IDENTITY":     "outbox-not-applicable",
+		"GATE_INPUT_SNAPSHOT_HASH": "snapshot-hash",
+		"GATE_CONFIG_HASH":         "config-hash",
+	}
+	forbiddenReads := map[string]bool{
+		"ADMIN_PASSWORD":                       true,
+		"ADMIN_SESSION_SECRET":                 true,
+		"WECHAT_MINI_APP_SECRET":               true,
+		"DOWNLOAD_TOKEN_SECRET":                true,
+		"WEIBO_COOKIE":                         true,
+		"XIGUA_COOKIE":                         true,
+		"SOHU_API_KEY":                         true,
+		"UNIVERSAL_PARSER_MUSICDL_CONFIG_JSON": true,
+	}
+	cfg, err := LoadDataGateWith(func(key string) string {
+		if forbiddenReads[key] {
+			t.Fatalf("LoadDataGateWith read non-migration key %s", key)
+		}
+		return values[key]
+	})
+	if err != nil {
+		t.Fatalf("LoadDataGateWith() error = %v", err)
+	}
+	if cfg.Mode != "revalidate" || cfg.ReceiptPath == "" || cfg.Role != "recovery" {
+		t.Fatalf("unexpected data gate config: %#v", cfg)
+	}
+}
+
 func TestLoadRunnerConfigAtEnvironmentBoundary(t *testing.T) {
 	environment := map[string]string{
 		"APP_ENV":                                  "test",
@@ -433,6 +474,20 @@ func TestLoadRejectsInvalidSensitiveMusicConfigWithoutEchoingIt(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), configured) || strings.Contains(err.Error(), "opaque-music-secret") {
 		t.Fatalf("LoadWith() exposed invalid sensitive music config: %v", err)
+	}
+}
+
+func TestLoadRejectsUnsafeMusicDLNetworkOverrideConfigWithoutEchoingIt(t *testing.T) {
+	configured := `{"sources":{"TIDALMusicClient":{"requests_overrides":{"headers":{"Cookie":"opaque-cookie"}}}}}`
+	_, err := LoadWith(environmentReader(map[string]string{
+		"APP_ENV":                              "test",
+		"UNIVERSAL_PARSER_MUSICDL_CONFIG_JSON": configured,
+	}))
+	if err == nil {
+		t.Fatal("LoadWith() accepted unsafe musicdl network override config")
+	}
+	if strings.Contains(err.Error(), configured) || strings.Contains(err.Error(), "opaque-cookie") {
+		t.Fatalf("LoadWith() exposed unsafe musicdl config: %v", err)
 	}
 }
 

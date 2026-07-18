@@ -3,27 +3,30 @@ package main
 import (
 	"context"
 	"errors"
+	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/1136623363/watermark-go/internal/config"
 )
 
+func TestRunRequiresExplicitCommand(t *testing.T) {
+	err := run(context.Background(), nil, validDeps())
+	if err == nil || !strings.Contains(err.Error(), "explicit command") {
+		t.Fatalf("run() error = %v", err)
+	}
+}
+
 func TestRunRejectsConfigurationBeforeConstructingApplication(t *testing.T) {
 	configErr := errors.New("configuration rejected")
 	constructed := false
-	err := run(
-		context.Background(),
-		nil,
-		func() (config.Config, error) { return config.Config{}, configErr },
-		func(context.Context, config.Config) error {
-			t.Fatal("migration ran after configuration failure")
-			return nil
-		},
-		func(config.Config) (applicationRunner, error) {
-			constructed = true
-			return runnerStub{}, nil
-		},
-	)
+	deps := validDeps()
+	deps.LoadConfig = func() (config.Config, error) { return config.Config{}, configErr }
+	deps.NewApplication = func(config.Config) (applicationRunner, error) {
+		constructed = true
+		return runnerStub{}, nil
+	}
+	err := run(context.Background(), []string{"serve"}, deps)
 	if !errors.Is(err, configErr) {
 		t.Fatalf("run() error = %v, want configuration error", err)
 	}
@@ -32,29 +35,22 @@ func TestRunRejectsConfigurationBeforeConstructingApplication(t *testing.T) {
 	}
 }
 
-func TestRunInvokesApplicationLifecycle(t *testing.T) {
+func TestRunInvokesApplicationLifecycleForServe(t *testing.T) {
 	runCalled := false
-	err := run(
-		context.Background(),
-		nil,
-		func() (config.Config, error) {
-			return config.Config{Environment: config.EnvironmentTest}, nil
-		},
-		func(context.Context, config.Config) error {
-			t.Fatal("migration ran for normal server mode")
+	deps := validDeps()
+	deps.LoadConfig = func() (config.Config, error) {
+		return config.Config{Environment: config.EnvironmentTest}, nil
+	}
+	deps.NewApplication = func(cfg config.Config) (applicationRunner, error) {
+		if cfg.Environment != config.EnvironmentTest {
+			t.Fatalf("application config environment = %q", cfg.Environment)
+		}
+		return runnerStub{run: func(context.Context) error {
+			runCalled = true
 			return nil
-		},
-		func(cfg config.Config) (applicationRunner, error) {
-			if cfg.Environment != config.EnvironmentTest {
-				t.Fatalf("application config environment = %q", cfg.Environment)
-			}
-			return runnerStub{run: func(context.Context) error {
-				runCalled = true
-				return nil
-			}}, nil
-		},
-	)
-	if err != nil {
+		}}, nil
+	}
+	if err := run(context.Background(), []string{"serve"}, deps); err != nil {
 		t.Fatalf("run() error = %v", err)
 	}
 	if !runCalled {
@@ -62,83 +58,94 @@ func TestRunInvokesApplicationLifecycle(t *testing.T) {
 	}
 }
 
-func TestRunExecutesMigrationAsExplicitOneShotWithProcessContext(t *testing.T) {
-	type contextKey struct{}
-	ctx, cancel := context.WithCancel(context.WithValue(context.Background(), contextKey{}, "process-value"))
-	cancel()
-	migrationCalled := false
-	applicationConstructed := false
-	err := run(
-		ctx,
-		[]string{"migrate"},
-		func() (config.Config, error) {
-			return config.Config{Environment: config.EnvironmentTest}, nil
-		},
-		func(migrationCtx context.Context, cfg config.Config) error {
-			migrationCalled = true
-			if migrationCtx != ctx || migrationCtx.Value(contextKey{}) != "process-value" {
-				t.Fatal("migration did not receive the process context")
-			}
-			return migrationCtx.Err()
-		},
-		func(config.Config) (applicationRunner, error) {
-			applicationConstructed = true
-			return runnerStub{}, nil
-		},
-	)
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("run() error = %v, want process cancellation", err)
+func TestDataGateNeverConstructsApplicationOrListener(t *testing.T) {
+	var dataGateCalls atomic.Int32
+	deps := validDeps()
+	deps.LoadConfig = func() (config.Config, error) {
+		t.Fatal("data-gate loaded full API config")
+		return config.Config{}, nil
 	}
-	if !migrationCalled || applicationConstructed {
-		t.Fatalf("migrationCalled/applicationConstructed = %t/%t", migrationCalled, applicationConstructed)
+	deps.LoadDataGateConfig = func() (config.DataGateConfig, error) {
+		return config.DataGateConfig{Environment: config.EnvironmentTest, Mode: "revalidate", ReceiptPath: "/tmp/receipt.json"}, nil
 	}
-}
-
-func TestRunReturnsMigrationErrorWithoutConstructingApplication(t *testing.T) {
-	migrationErr := errors.New("migration failed")
-	applicationConstructed := false
-	err := run(
-		context.Background(),
-		[]string{"migrate"},
-		func() (config.Config, error) {
-			return config.Config{Environment: config.EnvironmentTest}, nil
-		},
-		func(context.Context, config.Config) error { return migrationErr },
-		func(config.Config) (applicationRunner, error) {
-			applicationConstructed = true
-			return runnerStub{}, nil
-		},
-	)
-	if !errors.Is(err, migrationErr) {
-		t.Fatalf("run() error = %v, want migration error", err)
-	}
-	if applicationConstructed {
-		t.Fatal("run() constructed the server application after one-shot migration")
-	}
-}
-
-func TestRunCompletesSuccessfulMigrationDeterministicallyWithoutStartingServer(t *testing.T) {
-	for attempt := 0; attempt < 50; attempt++ {
-		migrationCalls := 0
-		applicationConstructed := false
-		err := run(
-			context.Background(),
-			[]string{"migrate"},
-			func() (config.Config, error) {
-				return config.Config{Environment: config.EnvironmentTest}, nil
-			},
-			func(context.Context, config.Config) error {
-				migrationCalls++
-				return nil
-			},
-			func(config.Config) (applicationRunner, error) {
-				applicationConstructed = true
-				return runnerStub{}, nil
-			},
-		)
-		if err != nil || migrationCalls != 1 || applicationConstructed {
-			t.Fatalf("attempt %d: err/calls/application = %v/%d/%t", attempt, err, migrationCalls, applicationConstructed)
+	deps.RunDataGate = func(ctx context.Context, cfg config.DataGateConfig) error {
+		if ctx == nil || cfg.Mode != "revalidate" {
+			t.Fatalf("unexpected data-gate request: %#v", cfg)
 		}
+		dataGateCalls.Add(1)
+		return nil
+	}
+	deps.NewApplication = func(config.Config) (applicationRunner, error) {
+		t.Fatal("data-gate constructed application")
+		return runnerStub{}, nil
+	}
+	if err := run(context.Background(), []string{"data-gate"}, deps); err != nil {
+		t.Fatalf("run() error = %v", err)
+	}
+	if dataGateCalls.Load() != 1 {
+		t.Fatalf("data-gate calls = %d", dataGateCalls.Load())
+	}
+}
+
+func TestServeRejectsStaleOrMismatchedGateReceiptBeforeStartingComponents(t *testing.T) {
+	gateErr := errors.New("gate receipt mismatch")
+	deps := validDeps()
+	deps.VerifyServeGate = func(context.Context, config.Config) error { return gateErr }
+	constructed := false
+	deps.NewApplication = func(config.Config) (applicationRunner, error) {
+		constructed = true
+		return runnerStub{}, nil
+	}
+	err := run(context.Background(), []string{"serve"}, deps)
+	if !errors.Is(err, gateErr) {
+		t.Fatalf("run() error = %v, want gate error", err)
+	}
+	if constructed {
+		t.Fatal("serve constructed application before gate receipt passed")
+	}
+}
+
+func TestAPIHealthcheckIsLocalSecretFreeAndReceiptBound(t *testing.T) {
+	var healthcheckCalls atomic.Int32
+	deps := validDeps()
+	deps.RunHealthcheck = func(ctx context.Context, cfg config.Config) error {
+		if ctx == nil || cfg.Environment != config.EnvironmentTest {
+			t.Fatalf("unexpected healthcheck cfg: %#v", cfg)
+		}
+		healthcheckCalls.Add(1)
+		return nil
+	}
+	if err := run(context.Background(), []string{"healthcheck", "api"}, deps); err != nil {
+		t.Fatalf("run() error = %v", err)
+	}
+	if healthcheckCalls.Load() != 1 {
+		t.Fatalf("healthcheck calls = %d", healthcheckCalls.Load())
+	}
+}
+
+func TestRunRejectsLegacyMigrateCommand(t *testing.T) {
+	err := run(context.Background(), []string{"migrate"}, validDeps())
+	if err == nil || !strings.Contains(err.Error(), "unknown command") {
+		t.Fatalf("run() error = %v", err)
+	}
+}
+
+func validDeps() processDeps {
+	return processDeps{
+		LoadConfig: func() (config.Config, error) {
+			return config.Config{Environment: config.EnvironmentTest}, nil
+		},
+		LoadDataGateConfig: func() (config.DataGateConfig, error) {
+			return config.DataGateConfig{Environment: config.EnvironmentTest, Mode: "apply", ReceiptPath: "/tmp/receipt.json"}, nil
+		},
+		RunDataGate:    func(context.Context, config.DataGateConfig) error { return nil },
+		RunHealthcheck: func(context.Context, config.Config) error { return nil },
+		VerifyServeGate: func(context.Context, config.Config) error {
+			return nil
+		},
+		NewApplication: func(config.Config) (applicationRunner, error) {
+			return runnerStub{}, nil
+		},
 	}
 }
 

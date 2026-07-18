@@ -1,0 +1,45 @@
+CREATE TABLE IF NOT EXISTS app_users (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  public_id CHAR(26) NOT NULL,
+  nickname VARCHAR(64) NOT NULL DEFAULT '',
+  avatar_url TEXT NULL,
+  status TINYINT NOT NULL DEFAULT 1,
+  registered_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  last_seen_at DATETIME NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_public_id (public_id),
+  KEY idx_status_seen (status, last_seen_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS app_user_identities (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  user_id BIGINT UNSIGNED NOT NULL,
+  identity_type VARCHAR(32) NOT NULL,
+  identity_key VARCHAR(191) NOT NULL,
+  union_key VARCHAR(191) NOT NULL DEFAULT '',
+  metadata_json JSON NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_identity (identity_type, identity_key),
+  KEY idx_user_type (user_id, identity_type),
+  KEY idx_union_key (union_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS platforms (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  platform_key VARCHAR(64) NOT NULL,
+  display_name VARCHAR(64) NOT NULL,
+  parser_type VARCHAR(32) NOT NULL DEFAULT 'native',
+  status VARCHAR(32) NOT NULL DEFAULT 'enabled',
+  parse_cost INT UNSIGNED NOT NULL DEFAULT 1,
+  sort_order INT NOT NULL DEFAULT 0,
+  config_json JSON NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_platform_key (platform_key),
+  KEY idx_status_sort (status, sort_order)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

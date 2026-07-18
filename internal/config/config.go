@@ -32,6 +32,7 @@ type Config struct {
 	Download    DownloadConfig
 	Security    SecurityConfig
 	Baseline    BaselineConfig
+	Gate        ServeGateConfig
 }
 
 type Summary struct {
@@ -122,6 +123,30 @@ type SecurityConfig struct {
 
 type BaselineConfig struct {
 	Concurrency int
+}
+
+type ServeGateConfig struct {
+	ReceiptPath string
+}
+
+type DataGateConfig struct {
+	Environment       string
+	Mode              string
+	MySQLDSN          string
+	RedisAddr         string
+	RedisNamespace    string
+	ReceiptPath       string
+	Role              string
+	DataStage         string
+	ImageDigest       string
+	DeploymentRunID   string
+	GateAttemptID     string
+	SchemaState       string
+	TargetDBIdentity  string
+	RedisIdentity     string
+	OutboxIdentity    string
+	InputSnapshotHash string
+	ConfigHash        string
 }
 
 type LoadOptions struct {
@@ -254,6 +279,11 @@ func LoadWithOptions(getenv func(string) string, options LoadOptions) (Config, e
 	if musicConfig != "" && !json.Valid([]byte(musicConfig)) {
 		return Config{}, errors.New("invalid UNIVERSAL_PARSER_MUSICDL_CONFIG_JSON")
 	}
+	if musicConfig != "" {
+		if err := validateMusicDLNetworkConfig(musicConfig); err != nil {
+			return Config{}, err
+		}
+	}
 	runner.Universal.MusicConfig = SensitiveValue{value: musicConfig}
 
 	downloadSecret, err := loadDownloadSecret(read, options)
@@ -298,12 +328,63 @@ func LoadWithOptions(getenv func(string) string, options LoadOptions) (Config, e
 		Baseline: BaselineConfig{
 			Concurrency: baselineConcurrency,
 		},
+		Gate: ServeGateConfig{
+			ReceiptPath: read.trimmed("GATE_RECEIPT_PATH"),
+		},
 	}
 
 	if cfg.Environment == EnvironmentProduction {
 		if err := validateProduction(cfg); err != nil {
 			return Config{}, err
 		}
+	}
+	return cfg, nil
+}
+
+func LoadDataGate() (DataGateConfig, error) {
+	return LoadDataGateWith(os.Getenv)
+}
+
+func LoadDataGateWith(getenv func(string) string) (DataGateConfig, error) {
+	if getenv == nil {
+		return DataGateConfig{}, errors.New("environment reader is required")
+	}
+	read := getenvReader(getenv)
+	environment, err := loadEnvironment(read)
+	if err != nil {
+		return DataGateConfig{}, err
+	}
+	mode := strings.ToLower(read.trimmed("GATE_MODE"))
+	if mode == "" {
+		mode = "apply"
+	}
+	if mode != "apply" && mode != "revalidate" {
+		return DataGateConfig{}, errors.New("unknown GATE_MODE")
+	}
+	cfg := DataGateConfig{
+		Environment:       environment,
+		Mode:              mode,
+		MySQLDSN:          read.trimmed("MYSQL_DSN"),
+		RedisAddr:         read.trimmed("REDIS_ADDR"),
+		RedisNamespace:    read.trimmed("REDIS_NAMESPACE"),
+		ReceiptPath:       read.trimmed("GATE_RECEIPT_PATH"),
+		Role:              read.trimmed("GATE_ROLE"),
+		DataStage:         read.trimmed("GATE_DATA_STAGE"),
+		ImageDigest:       read.trimmed("IMAGE_DIGEST"),
+		DeploymentRunID:   read.trimmed("DEPLOYMENT_RUN_ID"),
+		GateAttemptID:     read.trimmed("GATE_ATTEMPT_ID"),
+		SchemaState:       read.trimmed("GATE_SCHEMA_STATE"),
+		TargetDBIdentity:  read.trimmed("GATE_TARGET_DB_IDENTITY"),
+		RedisIdentity:     read.trimmed("GATE_REDIS_IDENTITY"),
+		OutboxIdentity:    read.trimmed("GATE_OUTBOX_IDENTITY"),
+		InputSnapshotHash: read.trimmed("GATE_INPUT_SNAPSHOT_HASH"),
+		ConfigHash:        read.trimmed("GATE_CONFIG_HASH"),
+	}
+	if cfg.Environment == EnvironmentProduction && cfg.MySQLDSN == "" {
+		return DataGateConfig{}, errors.New("MYSQL_DSN is required for data gate")
+	}
+	if cfg.ReceiptPath == "" {
+		return DataGateConfig{}, errors.New("GATE_RECEIPT_PATH is required for data gate")
 	}
 	return cfg, nil
 }
@@ -499,6 +580,59 @@ func validateProductionSecret(name, value string, minimum int, aes bool) error {
 		return fmt.Errorf("weak production secret: %s", name)
 	}
 	return nil
+}
+
+func validateMusicDLNetworkConfig(raw string) error {
+	var decoded any
+	if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
+		return errors.New("invalid UNIVERSAL_PARSER_MUSICDL_CONFIG_JSON")
+	}
+	if musicDLConfigContainsUnsafeNetworkOverride(decoded) {
+		return errors.New("unsafe musicdl config")
+	}
+	return nil
+}
+
+func musicDLConfigContainsUnsafeNetworkOverride(value any) bool {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, child := range typed {
+			if unsafeMusicDLNetworkConfigKey(key) || musicDLConfigContainsUnsafeNetworkOverride(child) {
+				return true
+			}
+		}
+	case []any:
+		for _, child := range typed {
+			if musicDLConfigContainsUnsafeNetworkOverride(child) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func unsafeMusicDLNetworkConfigKey(key string) bool {
+	normalized := strings.Map(func(r rune) rune {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
+			return r
+		}
+		if r >= 'A' && r <= 'Z' {
+			return r + ('a' - 'A')
+		}
+		return -1
+	}, key)
+	if strings.Contains(normalized, "request") && strings.Contains(normalized, "override") {
+		return true
+	}
+	switch normalized {
+	case "proxy", "proxies", "httpproxy", "httpsproxy", "allproxy", "noproxy",
+		"header", "headers", "cookie", "cookies", "authorization", "origin",
+		"referer", "session", "verify", "stream", "redirect", "redirects",
+		"allowredirect", "allowredirects":
+		return true
+	default:
+		return false
+	}
 }
 
 func isObviousPlaceholder(raw string) bool {

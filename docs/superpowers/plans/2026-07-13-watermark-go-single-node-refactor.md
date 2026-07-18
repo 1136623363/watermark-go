@@ -878,7 +878,7 @@ git commit -m "feat: guard all outbound network targets"
   gate receipt）
 - 修改：`internal/server/service.go`（删除 server 内根据 argv 自动迁移的路径，listener 只由 `serve` 启动）
 
-- [ ] **步骤 1：编写迁移幂等和 Redis 降级测试**
+- [x] **步骤 1：编写迁移幂等和 Redis 降级测试**
 
 ```go
 func TestMigrationsAreOrderedAndIdempotent(t *testing.T) {
@@ -971,13 +971,13 @@ rename、directory fsync 原子写入本组专属 volume，API 只读挂载；�
 `depends_on: service_completed_successfully` 一律视为 stale；负测证明不 force-recreate、旧 receipt、容器
 启动时间早于 attempt、以及 API 先行都会非零失败。
 
-- [ ] **步骤 2：确认失败**
+- [x] **步骤 2：确认失败**
 
 运行：`go test ./internal/store ./internal/cache -count=1`
 
 预期：FAIL，仓储和缓存包尚不存在。
 
-- [ ] **步骤 3：迁移核心表与 lease 字段**
+- [x] **步骤 3：迁移核心表与 lease 字段**
 
 从旧迁移保留结果、尝试、session、设置、样本、平台运行、任务、管理员和审计；
 任务表增加 `locked_by/locked_until/next_attempt_at` 与索引。生产不使用本地 JSON 作为权威配置。
@@ -994,7 +994,7 @@ identity 与 config hash，任何 DDL/import/scrub/write 调用都由类型化�
 本 role 专属 receipt，并与外部 runtime inspect 提供的实际 RepoDigest、当前 run/config/data identity
 交叉验证，成功后才构造任何 component。production 缺显式 subcommand 或使用未知 subcommand 立即失败。
 
-- [ ] **步骤 4：实现源 MariaDB 到目标 MySQL 的兼容导入**
+- [x] **步骤 4：实现源 MariaDB 到目标 MySQL 的兼容导入**
 
 数据源 discovery 必须记录 `engine/version/capabilities`；当前已知实机源为 MariaDB 11.8.6，目标为
 MySQL 8.4，不能把 MariaDB GTID 当 MySQL GTID 解析。提供只读源库、写入目标库的显式两阶段 importer：
@@ -1027,7 +1027,7 @@ checksum/no-writer proof，delta/reverse 为 mode 合法的 notApplicable，不�
 payload 均 scrub。必要运行秘密只由人工安全导入目标机仓库外 0600 runtime file，不进新 DB、日志、
 API 或 artifact。
 
-- [ ] **步骤 5：实现 Redis 可降级策略**
+- [x] **步骤 5：实现 Redis 可降级策略**
 
 Redis 负责 7 天热缓存、180 秒失败缓存、60 秒 URL 锁和限流；Redis 错误记录告警后回退内存，
 MySQL 读写不因 Redis 失败回滚。
@@ -1036,7 +1036,7 @@ MySQL 读写不因 Redis 失败回滚。
 取消、internal、credential_required、schema_changed 与 security rejection 不得进入普通负缓存。
 force refresh 同时绕过正/负缓存，Redis 与内存实现共享相同 key/version 语义和容量上限。
 
-- [ ] **步骤 6：验证**
+- [x] **步骤 6：验证**
 
 运行：
 
@@ -1047,6 +1047,13 @@ GOMAXPROCS=2 go test ./... -count=1
 
 预期：全部 PASS。
 
+**完成证据（2026-07-18）：** 已新增顶层 `migrations/001_core.sql` 至
+`migrations/012_task_leases.sql`、`internal/store`、`internal/cache`、`tests/integration/store`。
+本地仅运行纯 Go/sqlmock/golden/内存测试，未启动 Docker、testcontainers、宿主 MySQL/MariaDB 或 Redis。
+`GOMAXPROCS=2 go test ./internal/store ./internal/cache ./internal/config ./internal/app ./cmd/watermark-go -count=1`
+与 `GOMAXPROCS=2 go test ./... -count=1` PASS；integration profile 由 `//go:build integration`
+隔离，未配置 `STORE_INTEGRATION_READY=true` 时会 fail 而不是 skip。
+
 Actions 另运行（本地主机 Task 5 不运行）：
 
 ```bash
@@ -1055,7 +1062,7 @@ go test -tags=integration ./tests/integration/store -count=1
 
 使用 workflow 已固定 digest 的 MariaDB 11.8/MySQL 8.4 services，未执行或 skip 均使 image job 失败。
 
-- [ ] **步骤 7：Commit**
+- [x] **步骤 7：Commit**
 
 ```bash
 git add migrations internal/store internal/cache tests/integration/store \
