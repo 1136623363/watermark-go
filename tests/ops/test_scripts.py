@@ -533,6 +533,100 @@ def test_write_evidence_is_atomic_and_schema_guarded(tmp_path):
         raise AssertionError("write_evidence accepted payload without schemaVersion")
 
 
+def test_write_evidence_cli_builds_versioned_json_and_markdown(tmp_path):
+    json_path = tmp_path / "secret-scan.txt"
+    proc = subprocess.run(
+        [
+            "python3",
+            str(WRITE_EVIDENCE_PATH),
+            "--output",
+            str(json_path),
+            "--schema-version",
+            "1",
+            "--passed",
+            "true",
+            "--run-id",
+            "task15-local",
+            "--field",
+            "version=v8.30.1",
+            "--field",
+            "scope=all-refs-history",
+        ],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(json_path.read_text(encoding="utf-8"))
+    assert payload == {
+        "schemaVersion": 1,
+        "passed": True,
+        "runId": "task15-local",
+        "version": "v8.30.1",
+        "scope": "all-refs-history",
+    }
+    assert stat.S_IMODE(json_path.stat().st_mode) == 0o600
+
+    markdown_path = tmp_path / "local-verification.md"
+    proc = subprocess.run(
+        [
+            "python3",
+            str(WRITE_EVIDENCE_PATH),
+            "--output",
+            str(markdown_path),
+            "--format",
+            "markdown",
+            "--schema-version",
+            "1",
+            "--passed",
+            "true",
+            "--run-id",
+            "task15-local",
+            "--source-commit",
+            "f" * 40,
+            "--field",
+            "commands=pytest:0,go-test:0",
+            "--summary",
+            "Local verification passed with redacted command summaries.",
+        ],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    assert proc.returncode == 0, proc.stderr
+    body = markdown_path.read_text(encoding="utf-8")
+    assert body.startswith("---\n")
+    assert "schemaVersion: 1\n" in body
+    assert "passed: true\n" in body
+    assert "sourceCommit: " + "f" * 40 in body
+    assert "Local verification passed" in body
+    assert stat.S_IMODE(markdown_path.stat().st_mode) == 0o600
+
+
+def test_acceptance_allows_local_prebuild_media_parser_evidence_only_in_verification_slot(tmp_path):
+    verifier = load_module(ACCEPTANCE_PATH, "verify_acceptance")
+    evidence = valid_media_parser_evidence()
+    evidence["imageDigest"] = "notApplicablePreBuild"
+    evidence["ciRunId"] = "notApplicableLocal"
+    write_json(tmp_path / "artifacts" / "verification" / "media-parser-integration.json", evidence)
+
+    assert verifier.verify_root(tmp_path, mode="schema-of-present").passed is True
+
+    result = verifier.verify_root(
+        tmp_path,
+        mode="schema-of-present",
+        expected_image_digest="ghcr.io/1136623363/watermark-go@sha256:" + "a" * 64,
+    )
+    assert result.passed is False
+    assert "imageDigest" in " ".join(result.reasons)
+
+    acceptance_root = tmp_path / "acceptance-root"
+    write_json(acceptance_root / "artifacts" / "acceptance" / "media-parser-integration.json", evidence)
+    result = verifier.verify_root(acceptance_root, mode="schema-of-present")
+    assert result.passed is False
+    assert "imageDigest" in " ".join(result.reasons)
+
+
 def test_shell_scripts_are_guarded_and_never_build_images():
     required = [
         "smoke.sh",
