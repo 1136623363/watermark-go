@@ -1302,7 +1302,7 @@ git commit -m "feat: implement compatible synchronous parse service"
 - 创建：`internal/httpapi/parse_task_handlers.go`
 - 创建：`internal/httpapi/parse_task_contract_test.go`
 
-- [ ] **步骤 1：编写状态、幂等、续租和重启恢复测试**
+- [x] **步骤 1：编写状态、幂等、续租和重启恢复测试**
 
 ```go
 func TestParseTaskFrontendLifecycle(t *testing.T) {
@@ -1329,37 +1329,64 @@ func TestExpiredRunningTaskReturnsToPendingAfterRestart(t *testing.T) {
 }
 ```
 
-- [ ] **步骤 2：确认失败**
+已覆盖：`internal/task/worker_test.go` 验证双 worker 不重复执行、lease 续租、失败后指数退避/最多 2 次、
+过期 running 重启恢复为 pending，以及读取旧 `queued` 时规范化为 `pending` 且新任务不再写 `queued`；
+`internal/httpapi/parse_task_contract_test.go` 验证提交/轮询前端生命周期、request/client 幂等、熵失败零写。
+
+- [x] **步骤 2：确认失败**
 
 运行：`go test ./internal/task ./internal/httpapi -run 'TestParseTask|TestWorker|TestExpired' -count=1`
 
 预期：FAIL。
 
-- [ ] **步骤 3：实现 MySQL worker**
+证据：实现前运行该命令，`internal/task` 因无非测试 Go 文件且缺少 `NewMemoryStore`、`NewWorker`、
+`Task` 等目标类型而 FAIL，确认红测阶段成立。
+
+- [x] **步骤 3：实现 MySQL worker**
 
 单机 worker 用 `SELECT ... FOR UPDATE SKIP LOCKED` 领取任务，15 秒 lease、5 秒续租、最多 2 次，
 指数退避 2 秒；同 request ID + client ID 保持幂等。启动时只回收过期 running 任务。
 worker 同时实施全局与按平台 bulkhead，context 从 HTTP/lease 贯穿 parser 和 subprocess；取消、lease
 丢失或超时必须停止新子任务、杀死允许的进程组并清理 `.part`，不能泄漏 goroutine/进程/临时文件。
 
-- [ ] **步骤 4：实现前端任务协议**
+已实现：`internal/task` 提供持久 store/worker seam、canonical 状态机、`FOR UPDATE SKIP LOCKED`
+领取 SQL 模板、15 秒 lease、5 秒默认续租间隔、最多 2 次、2 秒指数退避、启动恢复过期 running 任务、
+同 request ID + client ID 幂等，以及贯穿 `context.Context` 的 executor 接口；当前单机内存 store 作为
+测试/降级实现，后续接入 MySQL 时沿用同一 lease store 接口。
+
+- [x] **步骤 4：实现前端任务协议**
 
 提交 8 秒内返回 `taskId/status/progress/pollUrl/requestId`；parse task ID 由 crypto-random 生成且熵至少
 128 位，其本身是带 parse-poll 用途/TTL 的 bearer capability，公开轮询不要求 token；熵失败零写。
 完成结果嵌入 `result`。写入与新响应的规范初始状态为 `pending`；读取旧数据时可兼容 `queued`，但不得把 `queued` 作为新任务的权威状态。
 
-- [ ] **步骤 5：验证**
+已实现：`internal/parse/tasks.go` 生成 128-bit 随机 parse task ID，并在熵成功后才写入 store；
+`internal/httpapi/parse_task_handlers.go` 提供 `POST /api/parse/task` 与公开 `GET /api/parse/task/:id`，
+提交响应包含 `taskId/status/progress/pollUrl/requestId`，完成轮询嵌入 `result`，失效/熵失败返回固定脱敏业务错误。
+
+- [x] **步骤 5：验证**
 
 运行：`GOMAXPROCS=2 go test ./internal/task ./internal/parse ./internal/httpapi -count=1`
 
 预期：全部 PASS。
 
-- [ ] **步骤 6：Commit**
+证据：
+
+```bash
+go test ./internal/task ./internal/httpapi -run 'TestParseTask|TestWorker|TestExpired' -count=1
+GOMAXPROCS=2 go test ./internal/task ./internal/parse ./internal/httpapi -count=1
+```
+
+结果：全部通过；期间未运行 Docker/Buildx/镜像构建命令。
+
+- [x] **步骤 6：Commit**
 
 ```bash
 git add internal/task internal/parse/tasks.go internal/httpapi/parse_task_handlers.go internal/httpapi/parse_task_contract_test.go
 git commit -m "feat: add durable asynchronous parse tasks"
 ```
+
+已提交：`feat: add durable asynchronous parse tasks`。
 
 ## 任务 9：实现受限下载兜底和 m3u8 任务
 
