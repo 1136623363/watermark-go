@@ -1166,7 +1166,7 @@ git commit -m "feat: implement mini program session authentication"
 - 创建：`internal/httpapi/parse_handlers.go`
 - 创建：`internal/httpapi/parse_contract_test.go`
 
-- [ ] **步骤 1：编写视频、图集、音频、m3u8 和错误契约测试**
+- [x] **步骤 1：编写视频、图集、音频、m3u8 和错误契约测试**
 
 ```go
 func TestNormalizeVideoProvidesAllFrontendAliases(t *testing.T) {
@@ -1209,7 +1209,13 @@ func TestNormalizeLivePhotoKeepsLegacyImagesShape(t *testing.T) {
 }
 ```
 
-- [ ] **步骤 2：确认失败**
+已覆盖：`internal/parse/url_test.go` 验证 descriptor query allowlist、重复/大小写/空值/百分号编码/稳定排序、
+tracking 剥离和日志字段不含 query 值；`internal/parse/service_test.go` 验证视频/audio aliases、Live Photo
+加法字段、force refresh 绕过正/负缓存、cache key 绑定 parser/result schema version、负缓存白名单、shareId
+熵失败零写、media URL 门禁和有界 fallback；`internal/httpapi/parse_contract_test.go` 验证 `/api/parse`、
+`/api/hybrid/video_data`、legacy share parse 与 cache route 的兼容 envelope。
+
+- [x] **步骤 2：确认失败**
 
 运行：
 
@@ -1220,7 +1226,10 @@ go test ./internal/parse ./internal/httpapi \
 
 预期：FAIL。
 
-- [ ] **步骤 3：实现解析数据流**
+证据：实现前运行该命令，`internal/parse` 因无非测试 Go 文件且缺少 `Result`、`ParserRequest`、
+`Descriptor`、`CacheIdentity` 等目标类型而 FAIL，确认红测阶段成立。
+
+- [x] **步骤 3：实现解析数据流**
 
 实现 URL 提取、缓存、URL 锁、平台识别、native→yt-dlp/universal 有界 fallback、媒体校验、
 MySQL 保存和 Redis 回填。新 `shareId` 必须由 crypto-random 生成、熵至少 128 位、带 cache 用途与 TTL，
@@ -1242,23 +1251,45 @@ dial 和每跳 redirect 都必须经过任务 4 netguard，不能复用研究项
 同一 canonical resource 使用 singleflight；cache key 含 parser/result schema version，取消、内部错误、
 凭据缺失、安全拒绝或 schema_changed 不写普通负缓存，force refresh 绕过正/负缓存。
 
-- [ ] **步骤 4：注册同步和兼容接口**
+已实现：`internal/parse` 提供纯 URL 提取/canonicalizer、`RegistryResolver`（由 parser descriptor registry
+派生平台/QueryKeys/HostRules）、`ParserChain` 有界 fallback、singleflight 同 canonical resource 合并、
+正/负缓存接口、用途域分离 cache identity、128-bit 随机 `shareId`、熵失败零写、media URL/数量门禁和
+typed error 分类；普通负缓存仅允许稳定 `unsupported/empty_media`。
+
+- [x] **步骤 4：注册同步和兼容接口**
 
 保留 `/api/parse`、`/api/parse/cache/:id`、`/api/hybrid/video_data`、legacy 和 v1 接口。
 新 envelope 使用 `msg` 而不是顶层 `message`，避免被当前前端误判为 Layzz envelope。
 
-- [ ] **步骤 5：验证**
+已实现：`internal/httpapi/parse_handlers.go` 注册 `/api/parse`、`/api/parse/cache/:id`、
+`/api/hybrid/video_data`、`/video/share/url/parse`、`/video/id/parse`、`/api/v1/parse` 和
+`/api/v1/parse/:source/:video_id`；新小程序 envelope 只使用 `code/msg/data`，legacy share/id parse
+成功保持 `code=200`。
+
+- [x] **步骤 5：验证**
 
 运行：`GOMAXPROCS=2 go test ./internal/parser/... ./internal/parse ./internal/httpapi -count=1`
 
 预期：全部 PASS。
 
-- [ ] **步骤 6：Commit**
+证据：
+
+```bash
+go test ./internal/parse ./internal/httpapi \
+  -run 'TestNormalize|TestForceRefresh|TestCanonicalURL|TestCacheKey|TestNegativeCache|TestParseContract' -count=1
+GOMAXPROCS=2 go test ./internal/parser/... ./internal/parse ./internal/httpapi -count=1
+```
+
+结果：全部通过；期间未运行 Docker/Buildx/镜像构建命令。
+
+- [x] **步骤 6：Commit**
 
 ```bash
 git add internal/parse internal/httpapi/parse_handlers.go internal/httpapi/parse_contract_test.go
 git commit -m "feat: implement compatible synchronous parse service"
 ```
+
+已提交：`feat: implement compatible synchronous parse service`。
 
 ## 任务 8：实现持久异步解析任务
 
