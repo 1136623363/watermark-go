@@ -33,16 +33,37 @@ REQUIRED_MEDIA_TESTS = (
 FULL_GIT_SHA_RE = re.compile(r"[a-f0-9]{40}")
 IMAGE_DIGEST_RE = re.compile(r".+@sha256:[a-f0-9]{64}")
 SHA256_RE = re.compile(r"[a-f0-9]{64}")
+EVIDENCE_KEY_RE = re.compile(r"[A-Za-z][A-Za-z0-9_]*\Z")
+SENSITIVE_EVIDENCE_PATTERNS = (
+    re.compile(r"ghp_[A-Za-z0-9]{20,}"),
+    re.compile(r"github_pat_[A-Za-z0-9_]{20,}"),
+    re.compile(r"\b(password|passwd|secret|token)\s*[:=]\s*\S+", re.IGNORECASE),
+)
 
 MEDIA_EVIDENCE_PATHS = (
     pathlib.Path("artifacts/verification/media-parser-integration.json"),
     pathlib.Path("artifacts/acceptance/media-parser-integration.json"),
 )
+LOCAL_VERIFICATION_PATH = pathlib.Path("artifacts/verification/local-verification.md")
+LEAK_SCAN_EVIDENCE_PATH = pathlib.Path("artifacts/verification/secret-scan.txt")
 MIGRATION_PATH = pathlib.Path("artifacts/migration/legacy-data-rehearsal.json")
 OBSERVATION_PATH = pathlib.Path("artifacts/deploy/observation-30m.json")
 BASELINE_GLOBS = (
     "artifacts/benchmark/baseline-round-*.json",
     "artifacts/benchmark/run-*.json",
+)
+LOCAL_VERIFICATION_COMMAND_KEYS = (
+    "gofmt",
+    "goVet",
+    "goRace",
+    "pythonBridgePolicy",
+    "baselineOpsPytest",
+    "frontendProvenance",
+    "miniProgramTests",
+    "mediaParserFocusedSuite",
+    "composeConfig",
+    "policy",
+    "gitleaks",
 )
 
 
@@ -70,6 +91,33 @@ def verify_root(
     reasons: list[str] = []
     checked: list[str] = []
     present = False
+
+    local_verification = root / LOCAL_VERIFICATION_PATH
+    if local_verification.exists():
+        present = True
+        checked.append(str(LOCAL_VERIFICATION_PATH))
+        try:
+            evidence, text = load_markdown_front_matter(local_verification)
+            reasons.extend(
+                validate_local_verification_evidence(
+                    evidence,
+                    text,
+                    expected_source_commit=expected_source_commit,
+                )
+            )
+        except ValueError as exc:
+            reasons.append(f"{LOCAL_VERIFICATION_PATH}: {exc}")
+
+    secret_scan = root / LEAK_SCAN_EVIDENCE_PATH
+    if secret_scan.exists():
+        present = True
+        checked.append(str(LEAK_SCAN_EVIDENCE_PATH))
+        reasons.extend(
+            validate_secret_scan_evidence(
+                load_json(secret_scan),
+                expected_source_commit=expected_source_commit,
+            )
+        )
 
     for relative in MEDIA_EVIDENCE_PATHS:
         path = root / relative
@@ -168,6 +216,71 @@ def validate_common(
         reasons.append(f"{label}: deploymentRunId does not match current attempt")
     if expected_cutover_attempt_id and evidence.get("cutoverAttemptId") != expected_cutover_attempt_id:
         reasons.append(f"{label}: cutoverAttemptId does not match current attempt")
+    return reasons
+
+
+def validate_local_verification_evidence(
+    evidence: dict[str, Any],
+    raw_text: str,
+    *,
+    expected_source_commit: str | None,
+) -> list[str]:
+    label = str(LOCAL_VERIFICATION_PATH)
+    reasons: list[str] = []
+    if not isinstance(evidence.get("schemaVersion"), int):
+        reasons.append(f"{label}: schemaVersion must be an integer")
+    if evidence.get("passed") is not True:
+        reasons.append(f"{label}: passed must be true and match recomputed local verification result")
+    run_id = evidence.get("runId")
+    if not isinstance(run_id, str) or not run_id.strip():
+        reasons.append(f"{label}: runId must be non-empty")
+    generated_at = evidence.get("generatedAt")
+    if not isinstance(generated_at, str) or not generated_at.strip():
+        reasons.append(f"{label}: generatedAt must be non-empty")
+    source_commit = str(evidence.get("sourceCommit", ""))
+    if not FULL_GIT_SHA_RE.fullmatch(source_commit):
+        reasons.append(f"{label}: sourceCommit must be a full git SHA")
+    if expected_source_commit and evidence.get("sourceCommit") != expected_source_commit:
+        reasons.append(f"{label}: sourceCommit does not match")
+    for key in LOCAL_VERIFICATION_COMMAND_KEYS:
+        if not exit_code_is_zero(evidence.get(key)):
+            reasons.append(f"{label}: {key} exit code must be recorded as 0")
+    if contains_sensitive_evidence_text(raw_text):
+        reasons.append(f"{label}: evidence text contains token-like sensitive material")
+    return reasons
+
+
+def validate_secret_scan_evidence(
+    evidence: dict[str, Any],
+    *,
+    expected_source_commit: str | None,
+) -> list[str]:
+    label = str(LEAK_SCAN_EVIDENCE_PATH)
+    reasons: list[str] = []
+    if not isinstance(evidence.get("schemaVersion"), int):
+        reasons.append(f"{label}: schemaVersion must be an integer")
+    if evidence.get("passed") is not True:
+        reasons.append(f"{label}: passed must be true and match recomputed secret scan result")
+    run_id = evidence.get("runId")
+    if not isinstance(run_id, str) or not run_id.strip():
+        reasons.append(f"{label}: runId must be non-empty")
+    generated_at = evidence.get("generatedAt")
+    if not isinstance(generated_at, str) or not generated_at.strip():
+        reasons.append(f"{label}: generatedAt must be non-empty")
+    source_commit = str(evidence.get("sourceCommit", ""))
+    if not FULL_GIT_SHA_RE.fullmatch(source_commit):
+        reasons.append(f"{label}: sourceCommit must be a full git SHA")
+    if expected_source_commit and evidence.get("sourceCommit") != expected_source_commit:
+        reasons.append(f"{label}: sourceCommit does not match")
+    version = evidence.get("version")
+    if not isinstance(version, str) or not version.strip():
+        reasons.append(f"{label}: version must be non-empty")
+    if evidence.get("scope") != "all-refs-history":
+        reasons.append(f"{label}: scope must be all-refs-history")
+    if evidence.get("redacted") not in (True, "true"):
+        reasons.append(f"{label}: redacted must be true")
+    if contains_sensitive_evidence_text(json.dumps(evidence, ensure_ascii=False, sort_keys=True)):
+        reasons.append(f"{label}: evidence text contains token-like sensitive material")
     return reasons
 
 
@@ -524,6 +637,60 @@ def manifest_test_names(manifest: list[Any]) -> set[str]:
             if name:
                 names.add(name)
     return names
+
+
+def load_markdown_front_matter(path: pathlib.Path) -> tuple[dict[str, Any], str]:
+    text = path.read_text(encoding="utf-8")
+    lines = text.splitlines()
+    if not lines or lines[0] != "---":
+        raise ValueError("markdown evidence must start with YAML front matter")
+    closing_index: int | None = None
+    for index, line in enumerate(lines[1:], start=1):
+        if line == "---":
+            closing_index = index
+            break
+    if closing_index is None:
+        raise ValueError("markdown evidence front matter is not closed")
+    evidence: dict[str, Any] = {}
+    for line_number, line in enumerate(lines[1:closing_index], start=2):
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        key, separator, raw_value = line.partition(":")
+        key = key.strip()
+        if separator != ":" or not EVIDENCE_KEY_RE.fullmatch(key):
+            raise ValueError(f"front matter line {line_number} has invalid evidence key")
+        if key in evidence:
+            raise ValueError(f"front matter key {key} is duplicated")
+        evidence[key] = parse_front_matter_scalar(raw_value.strip())
+    return evidence, text
+
+
+def parse_front_matter_scalar(value: str) -> Any:
+    lowered = value.lower()
+    if lowered == "true":
+        return True
+    if lowered == "false":
+        return False
+    if lowered == "null":
+        return None
+    if re.fullmatch(r"-?[0-9]+", value):
+        return int(value)
+    if len(value) >= 2 and value[0] == value[-1] == '"':
+        return json.loads(value)
+    return value
+
+
+def exit_code_is_zero(value: Any) -> bool:
+    if isinstance(value, bool):
+        return False
+    try:
+        return int(value) == 0
+    except (TypeError, ValueError):
+        return False
+
+
+def contains_sensitive_evidence_text(text: str) -> bool:
+    return any(pattern.search(text) for pattern in SENSITIVE_EVIDENCE_PATTERNS)
 
 
 def load_baseline_runner():

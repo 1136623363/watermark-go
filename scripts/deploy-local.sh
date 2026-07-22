@@ -23,9 +23,14 @@ case "$role" in
   *) fail "role must be recovery or candidate" ;;
 esac
 
+case "$role" in
+  recovery) readonly smoke_port="${RECOVERY_API_HOST_PORT:-5001}" ;;
+  candidate) readonly smoke_port="${CANDIDATE_API_HOST_PORT:-15001}" ;;
+esac
+
 scripts/preflight.sh
 docker compose --env-file "$runtime_env" -p "$compose_project" -f "$compose_file" --profile "$role" pull
 docker compose --env-file "$runtime_env" -p "$compose_project" -f "$compose_file" --profile "$role" up --force-recreate --no-deps data-gate-"${role}"
 docker compose --env-file "$runtime_env" -p "$compose_project" -f "$compose_file" --profile "$role" up -d --no-deps "parser-helper-${role}" "egress-proxy-${role}" "api-${role}"
-scripts/smoke.sh "http://127.0.0.1:${API_PORT:-5001}" "$attempt_id"
+scripts/smoke.sh "http://127.0.0.1:${smoke_port}" "$attempt_id"
 printf 'PASS project=%s role=%s attempt=%s\n' "$compose_project" "$role" "$attempt_id"

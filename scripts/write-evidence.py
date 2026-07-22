@@ -7,10 +7,14 @@ import argparse
 import json
 import os
 import pathlib
+import re
 import stat
 import sys
 import tempfile
 from typing import Any
+
+
+FIELD_KEY_RE = re.compile(r"[A-Za-z][A-Za-z0-9_]*\Z")
 
 
 def write_evidence(path: str | pathlib.Path, payload: dict[str, Any]) -> None:
@@ -52,6 +56,8 @@ def write_text_atomic(path: str | pathlib.Path, text: str) -> None:
 def validate_payload(payload: dict[str, Any]) -> None:
     if not isinstance(payload, dict):
         raise ValueError("evidence payload must be a JSON object")
+    for key in payload:
+        validate_field_key(key)
     if not isinstance(payload.get("schemaVersion"), int):
         raise ValueError("evidence payload requires integer schemaVersion")
     if not isinstance(payload.get("passed"), bool):
@@ -88,9 +94,12 @@ def yaml_scalar(value: Any) -> str:
 
 
 def re_match_safe_yaml_plain(text: str) -> bool:
-    import re
-
     return bool(re.fullmatch(r"[A-Za-z0-9_.@/-]+", text))
+
+
+def validate_field_key(key: str) -> None:
+    if not isinstance(key, str) or not FIELD_KEY_RE.fullmatch(key):
+        raise ValueError(f"evidence field key {key!r} must match {FIELD_KEY_RE.pattern}")
 
 
 def chmod_0600(path: pathlib.Path) -> None:
@@ -123,6 +132,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--field", action="append", default=[], help="Additional evidence field as key=value")
     parser.add_argument("--summary", default="", help="Markdown body summary for --format markdown")
     args = parser.parse_args(argv)
+    if args.path is not None and args.output is not None:
+        raise ValueError("provide either positional path or --output, not both")
     output = args.output or args.path
     if output is None:
         raise ValueError("evidence output path is required")
@@ -161,6 +172,7 @@ def build_payload_from_args(args: argparse.Namespace) -> dict[str, Any]:
         key, separator, value = field.partition("=")
         if separator != "=" or not key:
             raise ValueError("--field must be key=value")
+        validate_field_key(key)
         if key in payload:
             raise ValueError(f"duplicate evidence field {key}")
         payload[key] = value

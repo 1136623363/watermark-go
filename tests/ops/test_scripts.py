@@ -206,6 +206,57 @@ def valid_baseline_report(run_id="baseline-1", offset=0, invocation_prefix="base
     }
 
 
+def valid_local_verification_markdown(source_commit="f" * 40, **overrides):
+    fields = {
+        "schemaVersion": 1,
+        "passed": True,
+        "runId": "task15-local",
+        "sourceCommit": source_commit,
+        "generatedAt": "2026-07-22T09:35:22Z",
+        "gofmt": 0,
+        "goVet": 0,
+        "goRace": 0,
+        "pythonBridgePolicy": 0,
+        "baselineOpsPytest": 0,
+        "frontendProvenance": 0,
+        "miniProgramTests": 0,
+        "mediaParserFocusedSuite": 0,
+        "composeConfig": 0,
+        "policy": 0,
+        "gitleaks": 0,
+    }
+    fields.update(overrides)
+    lines = ["---"]
+    for key, value in fields.items():
+        if isinstance(value, bool):
+            value = "true" if value else "false"
+        lines.append(f"{key}: {value}")
+    lines.extend(
+        [
+            "---",
+            "",
+            "Task 15 local verification ran hermetic checks only; no image build, docker up, or service startup was performed.",
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def valid_secret_scan_evidence(source_commit="f" * 40, **overrides):
+    payload = {
+        "schemaVersion": 1,
+        "passed": True,
+        "runId": "task15-local",
+        "sourceCommit": source_commit,
+        "generatedAt": "2026-07-22T09:35:22Z",
+        "version": "v8.30.1",
+        "scope": "all-refs-history",
+        "redacted": "true",
+    }
+    payload.update(overrides)
+    return payload
+
+
 def write_minimal_complete_evidence(root):
     media = valid_media_parser_evidence()
     media["deploymentRunId"] = "deploy-current"
@@ -214,6 +265,66 @@ def write_minimal_complete_evidence(root):
     write_json(root / "artifacts" / "acceptance" / "media-parser-integration.json", media)
     write_json(root / "artifacts" / "migration" / "legacy-data-rehearsal.json", valid_migration_evidence())
     write_json(root / "artifacts" / "deploy" / "observation-30m.json", valid_observation_evidence())
+
+
+def test_acceptance_validates_local_verification_and_secret_scan_artifacts(tmp_path):
+    verifier = load_module(ACCEPTANCE_PATH, "verify_acceptance")
+    source_commit = "f" * 40
+    local_path = tmp_path / "artifacts" / "verification" / "local-verification.md"
+    secret_path = tmp_path / "artifacts" / "verification" / "secret-scan.txt"
+    local_path.parent.mkdir(parents=True, exist_ok=True)
+    local_path.write_text(valid_local_verification_markdown(source_commit), encoding="utf-8")
+    write_json(secret_path, valid_secret_scan_evidence(source_commit))
+
+    result = verifier.verify_root(
+        tmp_path,
+        mode="schema-of-present",
+        expected_source_commit=source_commit,
+    )
+
+    assert result.passed is True
+    assert "artifacts/verification/local-verification.md" in result.checked
+    assert "artifacts/verification/secret-scan.txt" in result.checked
+
+
+def test_acceptance_rejects_broken_local_verification_artifact(tmp_path):
+    verifier = load_module(ACCEPTANCE_PATH, "verify_acceptance")
+    local_path = tmp_path / "artifacts" / "verification" / "local-verification.md"
+    local_path.parent.mkdir(parents=True, exist_ok=True)
+    local_path.write_text(
+        valid_local_verification_markdown("f" * 40, gitleaks=1, sourceCommit="e" * 40),
+        encoding="utf-8",
+    )
+
+    result = verifier.verify_root(
+        tmp_path,
+        mode="schema-of-present",
+        expected_source_commit="f" * 40,
+    )
+
+    assert result.passed is False
+    joined = " ".join(result.reasons)
+    assert "sourceCommit" in joined
+    assert "gitleaks" in joined
+
+
+def test_acceptance_rejects_broken_secret_scan_artifact(tmp_path):
+    verifier = load_module(ACCEPTANCE_PATH, "verify_acceptance")
+    write_json(
+        tmp_path / "artifacts" / "verification" / "secret-scan.txt",
+        valid_secret_scan_evidence("f" * 40, passed=False, redacted="false"),
+    )
+
+    result = verifier.verify_root(
+        tmp_path,
+        mode="schema-of-present",
+        expected_source_commit="f" * 40,
+    )
+
+    assert result.passed is False
+    joined = " ".join(result.reasons)
+    assert "passed" in joined
+    assert "redacted" in joined
 
 
 def test_acceptance_recomputes_media_parser_machine_evidence(tmp_path):
@@ -603,6 +714,33 @@ def test_write_evidence_cli_builds_versioned_json_and_markdown(tmp_path):
     assert stat.S_IMODE(markdown_path.stat().st_mode) == 0o600
 
 
+def test_write_evidence_cli_rejects_invalid_field_keys(tmp_path):
+    for index, field in enumerate(["bad:key=value", "1bad=value", "---=value", "bad-key=value"]):
+        output = tmp_path / f"invalid-{index}.json"
+        proc = subprocess.run(
+            [
+                "python3",
+                str(WRITE_EVIDENCE_PATH),
+                "--output",
+                str(output),
+                "--schema-version",
+                "1",
+                "--passed",
+                "true",
+                "--run-id",
+                "task15-local",
+                "--field",
+                field,
+            ],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        assert proc.returncode != 0
+        assert "field" in proc.stderr or "key" in proc.stderr
+        assert not output.exists()
+
+
 def test_acceptance_allows_local_prebuild_media_parser_evidence_only_in_verification_slot(tmp_path):
     verifier = load_module(ACCEPTANCE_PATH, "verify_acceptance")
     evidence = valid_media_parser_evidence()
@@ -655,6 +793,9 @@ def test_shell_scripts_are_guarded_and_never_build_images():
     assert "--force-recreate --no-deps data-gate-" in deploy
     assert "docker compose" in deploy
     assert " pull\n" in deploy or " pull " in deploy
+    assert "CANDIDATE_API_HOST_PORT:-15001" in deploy
+    assert "RECOVERY_API_HOST_PORT:-5001" in deploy
+    assert "API_PORT:-5001" not in deploy
 
     compose = (ROOT / "deploy" / "compose.yml").read_text(encoding="utf-8")
     env_example = (ROOT / "deploy" / "env.example").read_text(encoding="utf-8")
