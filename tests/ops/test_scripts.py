@@ -821,6 +821,48 @@ def test_shell_scripts_are_guarded_and_never_build_images():
     assert "> /tmp/watermark-promotion-evidence.json" not in promote
 
 
+def test_preflight_accepts_compose_v2_structured_allowed_ports(tmp_path):
+    compose_file = tmp_path / "compose.yml"
+    compose_file.write_text(
+        "services:\n"
+        "  api-recovery:\n"
+        "    image: ghcr.io/1136623363/watermark-go@sha256:" + "a" * 64 + "\n",
+        encoding="utf-8",
+    )
+    runtime_env = tmp_path / "runtime.env"
+    runtime_env.write_text("RECOVERY_API_HOST_PORT=15001\n", encoding="utf-8")
+    runtime_env.chmod(0o600)
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, sys\n"
+        "if sys.argv[1:3] != ['compose', '--env-file'] or 'config' not in sys.argv:\n"
+        "    raise SystemExit('unexpected docker invocation: ' + ' '.join(sys.argv))\n"
+        "print(json.dumps({'services': {'api-recovery': {'ports': ["
+        "{'host_ip': '127.0.0.1', 'published': '15001', 'target': 5001, 'protocol': 'tcp'}"
+        "]}}}))\n",
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+
+    env = os.environ.copy()
+    env["PATH"] = str(fake_bin) + os.pathsep + env["PATH"]
+    env["COMPOSE_FILE"] = str(compose_file)
+    env["RUNTIME_ENV"] = str(runtime_env)
+    proc = subprocess.run(
+        ["bash", str(ROOT / "scripts" / "preflight.sh")],
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    assert "PASS project=watermark-go" in proc.stdout
+
+
 def test_verify_acceptance_cli_rejects_old_pass_artifact(tmp_path):
     write_json(
         tmp_path / "artifacts" / "verification" / "media-parser-integration.json",

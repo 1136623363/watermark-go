@@ -4,6 +4,7 @@ set -Eeuo pipefail
 readonly compose_project=watermark-go
 readonly compose_file="${COMPOSE_FILE:-deploy/compose.yml}"
 readonly runtime_env="${RUNTIME_ENV:-/var/lib/watermark-go/runtime.env}"
+readonly role="${DEPLOY_ROLE:-recovery}"
 
 cleanup() { :; }
 trap cleanup EXIT
@@ -18,18 +19,37 @@ fail() {
 
 test -f "$compose_file" || fail "missing compose file"
 test -f "$runtime_env" || fail "missing runtime env"
+case "$role" in
+  recovery|candidate) ;;
+  *) fail "role must be recovery or candidate" ;;
+esac
 mode="$(stat -c '%a' "$runtime_env")"
 test "$mode" = "600" || fail "runtime env must be 0600"
 grep -nE '(^|[[:space:]])build:' "$compose_file" && fail "compose contains disallowed local image creation"
 
 rendered_dir="$(mktemp -d)"
 trap 'rm -rf "$rendered_dir"' EXIT HUP INT TERM
-rendered="$rendered_dir/compose.rendered.yml"
-docker compose --env-file "$runtime_env" -p "$compose_project" -f "$compose_file" config > "$rendered"
-grep -nE '(^|[[:space:]])build:' "$rendered" && fail "rendered compose contains disallowed local image creation"
+rendered="$rendered_dir/compose.rendered.json"
+docker compose --env-file "$runtime_env" -p "$compose_project" -f "$compose_file" --profile "$role" config --format json > "$rendered"
+python3 - "$rendered" <<'PY' || fail "rendered compose policy rejected"
+import json
+import sys
 
-if grep -nE '0\.0\.0\.0:|:80:|:443:|:15002:|:5002:' "$rendered"; then
-  fail "rendered compose has a host bind outside 127.0.0.1:5001 or 127.0.0.1:15001"
-fi
-grep -q '127.0.0.1:5001:5001\|127.0.0.1:15001:5001' "$rendered" || fail "missing allowed API bind"
+document = json.load(open(sys.argv[1], encoding="utf-8"))
+allowed_published = {"5001", "15001"}
+allowed_seen = False
+for name, service in document.get("services", {}).items():
+    if "build" in service:
+        raise SystemExit(f"{name}: build is disallowed")
+    for port in service.get("ports", []) or []:
+        host_ip = str(port.get("host_ip", ""))
+        published = str(port.get("published", ""))
+        target = str(port.get("target", ""))
+        protocol = str(port.get("protocol", "tcp"))
+        if host_ip != "127.0.0.1" or target != "5001" or published not in allowed_published or protocol != "tcp":
+            raise SystemExit(f"{name}: host bind is outside allowlist")
+        allowed_seen = True
+if not allowed_seen:
+    raise SystemExit("missing allowed API bind")
+PY
 printf 'PASS project=%s\n' "$compose_project"
