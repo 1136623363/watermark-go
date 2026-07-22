@@ -3,7 +3,7 @@
   "predicate": {
     "SPDXID": "SPDXRef-DOCUMENT",
     "creationInfo": {
-      "created": "2026-07-22T12:13:06Z",
+      "created": "2026-07-22T12:32:55Z",
       "creators": [
         "Organization: Anchore, Inc",
         "Tool: syft-v1.42.3",
@@ -12,7 +12,7 @@
       "licenseListVersion": "3.28"
     },
     "dataLicense": "CC0-1.0",
-    "documentNamespace": "https://anchore.com/syft/dir/sbom-369e8aca-f53e-4354-b572-979438f4e182",
+    "documentNamespace": "https://anchore.com/syft/dir/sbom-6cc3eca7-4947-4d2f-bc20-5652bd8d6e67",
     "files": [
       {
         "SPDXID": "SPDXRef-File-app-bin-netguard-proxy-18fe8b165c20a078",
@@ -22,7 +22,7 @@
             "checksumValue": "0b300569deeac69c22a8544f7c72ccb7464a8ee40bd883dccf8bbc99bf2ed798"
           }
         ],
-        "comment": "layerID: sha256:a0929781714391ce562e69937b3c870855d0d56f81850b2f5c650a5deeb25c68",
+        "comment": "layerID: sha256:d150e81e767dc4b4c6c2e3b4ff2fcb7acf6c11546ffb00172e9da713c9fd05f8",
         "copyrightText": "NOASSERTION",
         "fileName": "app/bin/netguard-proxy",
         "fileTypes": [
@@ -42,7 +42,7 @@
             "checksumValue": "a863c49dab0cde662e132e45e23c0c1b93c84994cf0848b8b204341eba340f63"
           }
         ],
-        "comment": "layerID: sha256:a0929781714391ce562e69937b3c870855d0d56f81850b2f5c650a5deeb25c68",
+        "comment": "layerID: sha256:d150e81e767dc4b4c6c2e3b4ff2fcb7acf6c11546ffb00172e9da713c9fd05f8",
         "copyrightText": "NOASSERTION",
         "fileName": "app/bin/parser-helper",
         "fileTypes": [
@@ -62,7 +62,7 @@
             "checksumValue": "517ff3f01aa1342165ab5dc6cdda49aebcd1d982cb7b2afc07a160152ebb7001"
           }
         ],
-        "comment": "layerID: sha256:a0929781714391ce562e69937b3c870855d0d56f81850b2f5c650a5deeb25c68",
+        "comment": "layerID: sha256:d150e81e767dc4b4c6c2e3b4ff2fcb7acf6c11546ffb00172e9da713c9fd05f8",
         "copyrightText": "NOASSERTION",
         "fileName": "app/bin/watermark-go",
         "fileTypes": [
@@ -28256,7 +28256,7 @@
             "checksumValue": "2440052f5fb52e7b1d955ef52aa99120e0c63ebb605f53ef4e1424e4ac4c1daa"
           }
         ],
-        "comment": "layerID: sha256:28a0ee2ceaf30abf75555dec7aadcddb68ca2ec1aa7e1cf6f9d61b812e1024a7",
+        "comment": "layerID: sha256:d0d5ceed12cacbdf7492dc747e50fed260fba4074edc12a406e1075f8d8defb1",
         "copyrightText": "NOASSERTION",
         "fileName": "usr/local/lib/python3.12/site-packages/yt_dlp-2026.7.4.dist-info/METADATA",
         "fileTypes": [
@@ -28275,7 +28275,7 @@
             "checksumValue": "81352e6245b8e94b668ea1ddcb764ef6bc3e9de803c4361aa949baa03b065bc4"
           }
         ],
-        "comment": "layerID: sha256:28a0ee2ceaf30abf75555dec7aadcddb68ca2ec1aa7e1cf6f9d61b812e1024a7",
+        "comment": "layerID: sha256:d0d5ceed12cacbdf7492dc747e50fed260fba4074edc12a406e1075f8d8defb1",
         "copyrightText": "NOASSERTION",
         "fileName": "usr/local/lib/python3.12/site-packages/yt_dlp-2026.7.4.dist-info/RECORD",
         "fileTypes": [
@@ -88036,9 +88036,9 @@
   "subject": [
     {
       "digest": {
-        "sha256": "8965365d516da943ee50e420b1ceef379c7adddcc681c7e47b57ff38b618d232"
+        "sha256": "6e8d387c320ec223105694d7aaf69d2f686729e350e65f321ac0b30d97aa61ef"
       },
-      "name": "pkg:docker/ghcr.io/1136623363/watermark-go@sha-1799fba603c0c76a9f0159ab6a909ba6331b66a9?platform=linux%2Famd64"
+      "name": "pkg:docker/ghcr.io/1136623363/watermark-go@sha-5751eb1fd69f1cd5d4b2c3b2c441028851d5be7f?platform=linux%2Famd64"
     }
   ]
 }

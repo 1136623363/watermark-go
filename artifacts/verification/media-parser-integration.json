@@ -1,6 +1,6 @@
 {
-  "ciRunId": "29918492947",
-  "deploymentRunId": "deploy-a-20260722T121822Z",
+  "ciRunId": "29919832312",
+  "deploymentRunId": "deploy-a-20260722T123545Z",
   "gateResults": {
     "cacheSemantics": {
       "command": "GOMAXPROCS=2 GOMEMLIMIT=2GiB go test ./internal/parser/... ./internal/parse ./internal/cache ./internal/media ./tests/contracts -run 'Test(Registry|StructuredJSON|MediaCandidate|CanonicalURL|CacheKey|NegativeCache|NormalizeLivePhoto|DASH)' -count=1",
@@ -47,14 +47,14 @@
     "structuredJSON": true,
     "unsafePatternScan": true
   },
-  "generatedAt": "2026-07-22T12:22:51Z",
+  "generatedAt": "2026-07-22T12:39:55Z",
   "hermetic": true,
-  "imageDigest": "ghcr.io/1136623363/watermark-go@sha256:f1e93ab7f1cb563a9bc39ac82398c0edbe450bf6de3e3f77d3929646ac4bae26",
+  "imageDigest": "ghcr.io/1136623363/watermark-go@sha256:25b274653045858cd67ac1a609795d281680348fcaed80abc5ec9ac6300b26ee",
   "liveAggregateOnly": false,
   "passed": true,
-  "runId": "task15-media-20260722T122251Z",
+  "runId": "task15-media-20260722T123955Z",
   "schemaVersion": 1,
-  "sourceCommit": "1799fba603c0c76a9f0159ab6a909ba6331b66a9",
+  "sourceCommit": "5751eb1fd69f1cd5d4b2c3b2c441028851d5be7f",
   "testManifest": [
     {
       "command": "GOMAXPROCS=2 GOMEMLIMIT=2GiB go test ./internal/parser/... ./internal/parse ./internal/cache ./internal/media ./tests/contracts -run 'Test(Registry|StructuredJSON|MediaCandidate|CanonicalURL|CacheKey|NegativeCache|NormalizeLivePhoto|DASH)' -count=1",
