@@ -801,10 +801,13 @@ def test_shell_scripts_are_guarded_and_never_build_images():
     assert deploy.index(" up -d mysql redis") < deploy.index("--force-recreate --no-deps data-gate-")
     assert deploy.index(" up -d mysql redis") < deploy.index(deploy_wait_call)
     assert deploy.index(deploy_wait_call) < deploy.index("--force-recreate --no-deps data-gate-")
+    assert "runtime_value()" in deploy
+    assert 'runtime_value "RECOVERY_API_HOST_PORT" "5001"' in deploy
+    assert 'runtime_value "CANDIDATE_API_HOST_PORT" "15001"' in deploy
     assert "docker compose" in deploy
     assert " pull\n" in deploy or " pull " in deploy
-    assert "CANDIDATE_API_HOST_PORT:-15001" in deploy
-    assert "RECOVERY_API_HOST_PORT:-5001" in deploy
+    assert "CANDIDATE_API_HOST_PORT:-15001" not in deploy
+    assert "RECOVERY_API_HOST_PORT:-5001" not in deploy
     assert "API_PORT:-5001" not in deploy
 
     compose = (ROOT / "deploy" / "compose.yml").read_text(encoding="utf-8")

@@ -192,6 +192,7 @@ func TestComposeDeploymentPolicy(t *testing.T) {
 		}
 		gate := document.services["data-gate-"+role]
 		assertStringSliceEqual(t, serviceStringSlice(gate["networks"]), []string{"data"})
+		assertStringSliceEqual(t, serviceStringSlice(gate["command"]), []string{"data-gate"})
 		gateEnv := envMap(gate)
 		imageKey := strings.ToUpper(role) + "_IMAGE"
 		requiredGateEnv := map[string]string{
@@ -221,7 +222,9 @@ func TestComposeDeploymentPolicy(t *testing.T) {
 		if health, ok := gate["healthcheck"].(map[string]any); !ok || health["disable"] != true {
 			t.Fatalf("data gate %s healthcheck = %#v", role, gate["healthcheck"])
 		}
-		apiEnv := envMap(document.services["api-"+role])
+		api := document.services["api-"+role]
+		assertStringSliceEqual(t, serviceStringSlice(api["command"]), []string{"serve"})
+		apiEnv := envMap(api)
 		for key, expected := range requiredGateEnv {
 			if apiEnv[key] != expected {
 				t.Fatalf("api %s env %s = %#v, want %s", role, key, apiEnv[key], expected)
@@ -229,6 +232,8 @@ func TestComposeDeploymentPolicy(t *testing.T) {
 		}
 
 		helper := document.services["parser-helper-"+role]
+		assertStringSliceEqual(t, serviceStringSlice(helper["entrypoint"]), []string{"/app/bin/parser-helper"})
+		assertStringSliceEqual(t, serviceStringSlice(helper["command"]), []string{"serve"})
 		if slices.Contains(serviceStringSlice(helper["networks"]), "data") || slices.Contains(serviceStringSlice(helper["networks"]), "egress") {
 			t.Fatalf("helper %s crossed network boundary: %#v", role, helper["networks"])
 		}
@@ -237,6 +242,8 @@ func TestComposeDeploymentPolicy(t *testing.T) {
 		}
 
 		proxy := document.services["egress-proxy-"+role]
+		assertStringSliceEqual(t, serviceStringSlice(proxy["entrypoint"]), []string{"/app/bin/netguard-proxy"})
+		assertStringSliceEqual(t, serviceStringSlice(proxy["command"]), []string{"serve"})
 		if slices.Contains(serviceStringSlice(proxy["networks"]), "data") {
 			t.Fatalf("proxy %s joined data network", role)
 		}

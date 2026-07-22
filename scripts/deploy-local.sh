@@ -24,9 +24,23 @@ case "$role" in
   *) fail "role must be recovery or candidate" ;;
 esac
 
+test -f "$runtime_env" || fail "missing runtime env"
+
+runtime_value() {
+  local key="${1:?runtime key required}"
+  local default_value="${2:-}"
+  local value
+  value="$(awk -F= -v key="$key" '$1 == key {print substr($0, length($1) + 2); found = 1; exit} END {if (!found) exit 1}' "$runtime_env" || true)"
+  if [ -n "$value" ]; then
+    printf '%s\n' "$value"
+  else
+    printf '%s\n' "$default_value"
+  fi
+}
+
 case "$role" in
-  recovery) readonly smoke_port="${RECOVERY_API_HOST_PORT:-5001}" ;;
-  candidate) readonly smoke_port="${CANDIDATE_API_HOST_PORT:-15001}" ;;
+  recovery) readonly smoke_port="$(runtime_value "RECOVERY_API_HOST_PORT" "5001")" ;;
+  candidate) readonly smoke_port="$(runtime_value "CANDIDATE_API_HOST_PORT" "15001")" ;;
 esac
 
 wait_for_support_services() {

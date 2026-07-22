@@ -4,7 +4,7 @@ services:
   data-gate-recovery:
     profiles: ["recovery"]
     image: ${RECOVERY_IMAGE:?same verified A registry digest}
-    command: ["/app/bin/watermark-go", "data-gate"]
+    command: ["data-gate"]
     environment:
       APP_ENV: production
       DEPLOY_ROLE: recovery
@@ -35,7 +35,7 @@ services:
   api-recovery:
     profiles: ["recovery"]
     image: ${RECOVERY_IMAGE:?same verified A registry digest}
-    command: ["/app/bin/watermark-go", "serve"]
+    command: ["serve"]
     environment:
       APP_ENV: production
       PORT: "5001"
@@ -85,7 +85,8 @@ services:
   parser-helper-recovery:
     profiles: ["recovery"]
     image: ${RECOVERY_IMAGE:?same verified A registry digest}
-    command: ["/app/bin/parser-helper", "serve"]
+    entrypoint: ["/app/bin/parser-helper"]
+    command: ["serve"]
     environment:
       DEPLOY_ROLE: recovery
       PARSER_UDS: /run/watermark-parser/parser.sock
@@ -100,7 +101,8 @@ services:
   egress-proxy-recovery:
     profiles: ["recovery"]
     image: ${RECOVERY_IMAGE:?same verified A registry digest}
-    command: ["/app/bin/netguard-proxy", "serve"]
+    entrypoint: ["/app/bin/netguard-proxy"]
+    command: ["serve"]
     environment:
       DEPLOY_ROLE: recovery
       PARSER_UDS: /run/watermark-parser/parser.sock
@@ -114,7 +116,7 @@ services:
   data-gate-candidate:
     profiles: ["candidate"]
     image: ${CANDIDATE_IMAGE:?same verified B registry digest}
-    command: ["/app/bin/watermark-go", "data-gate"]
+    command: ["data-gate"]
     environment:
       APP_ENV: production
       DEPLOY_ROLE: candidate
@@ -145,7 +147,7 @@ services:
   api-candidate:
     profiles: ["candidate"]
     image: ${CANDIDATE_IMAGE:?same verified B registry digest}
-    command: ["/app/bin/watermark-go", "serve"]
+    command: ["serve"]
     environment:
       APP_ENV: production
       PORT: "5001"
@@ -195,7 +197,8 @@ services:
   parser-helper-candidate:
     profiles: ["candidate"]
     image: ${CANDIDATE_IMAGE:?same verified B registry digest}
-    command: ["/app/bin/parser-helper", "serve"]
+    entrypoint: ["/app/bin/parser-helper"]
+    command: ["serve"]
     environment:
       DEPLOY_ROLE: candidate
       PARSER_UDS: /run/watermark-parser/parser.sock
@@ -210,7 +213,8 @@ services:
   egress-proxy-candidate:
     profiles: ["candidate"]
     image: ${CANDIDATE_IMAGE:?same verified B registry digest}
-    command: ["/app/bin/netguard-proxy", "serve"]
+    entrypoint: ["/app/bin/netguard-proxy"]
+    command: ["serve"]
     environment:
       DEPLOY_ROLE: candidate
       PARSER_UDS: /run/watermark-parser/parser.sock
