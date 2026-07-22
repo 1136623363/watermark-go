@@ -238,11 +238,16 @@ func TestMediaParserIntegrationContract(t *testing.T) {
 }
 
 func TestFrontendProvenanceGuardScript(t *testing.T) {
-	script := filepath.Join("..", "..", "scripts", "verify-frontend-provenance.sh")
+	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatalf("resolve repository root: %v", err)
+	}
+	script := filepath.Join(repoRoot, "scripts", "verify-frontend-provenance.sh")
 	if _, err := os.Stat(script); err != nil {
 		t.Fatalf("frontend provenance guard is missing: %v", err)
 	}
 	command := exec.Command("bash", script)
+	command.Dir = repoRoot
 	frontendRepo := os.Getenv("FRONTEND_REPO")
 	if frontendRepo == "" {
 		frontendRepo = "/srv/watermark"
