@@ -1,0 +1,96 @@
+{
+  "ciRunId": "notApplicableLocal",
+  "gateResults": {
+    "cacheSemantics": {
+      "command": "GOMAXPROCS=2 GOMEMLIMIT=2GiB go test ./internal/parser/... ./internal/parse ./internal/cache ./internal/media ./tests/contracts -run 'Test(Registry|StructuredJSON|MediaCandidate|CanonicalURL|CacheKey|NegativeCache|NormalizeLivePhoto|DASH)' -count=1",
+      "exitCode": 0,
+      "passed": true
+    },
+    "candidateRankingBudget": {
+      "command": "GOMAXPROCS=2 GOMEMLIMIT=2GiB go test ./internal/parser/... ./internal/parse ./internal/cache ./internal/media ./tests/contracts -run 'Test(Registry|StructuredJSON|MediaCandidate|CanonicalURL|CacheKey|NegativeCache|NormalizeLivePhoto|DASH)' -count=1",
+      "exitCode": 0,
+      "passed": true
+    },
+    "queryPolicy": {
+      "command": "GOMAXPROCS=2 GOMEMLIMIT=2GiB go test ./internal/parser/... ./internal/parse ./internal/cache ./internal/media ./tests/contracts -run 'Test(Registry|StructuredJSON|MediaCandidate|CanonicalURL|CacheKey|NegativeCache|NormalizeLivePhoto|DASH)' -count=1",
+      "exitCode": 0,
+      "passed": true
+    },
+    "registry": {
+      "command": "GOMAXPROCS=2 GOMEMLIMIT=2GiB go test ./internal/parser/... ./internal/parse ./internal/cache ./internal/media ./tests/contracts -run 'Test(Registry|StructuredJSON|MediaCandidate|CanonicalURL|CacheKey|NegativeCache|NormalizeLivePhoto|DASH)' -count=1",
+      "exitCode": 0,
+      "passed": true
+    },
+    "richMedia": {
+      "command": "GOMAXPROCS=2 GOMEMLIMIT=2GiB go test ./internal/parser/... ./internal/parse ./internal/cache ./internal/media ./tests/contracts -run 'Test(Registry|StructuredJSON|MediaCandidate|CanonicalURL|CacheKey|NegativeCache|NormalizeLivePhoto|DASH)' -count=1",
+      "exitCode": 0,
+      "passed": true
+    },
+    "structuredJSON": {
+      "command": "GOMAXPROCS=2 GOMEMLIMIT=2GiB go test ./internal/parser/... ./internal/parse ./internal/cache ./internal/media ./tests/contracts -run 'Test(Registry|StructuredJSON|MediaCandidate|CanonicalURL|CacheKey|NegativeCache|NormalizeLivePhoto|DASH)' -count=1",
+      "exitCode": 0,
+      "passed": true
+    },
+    "unsafePatternScan": {
+      "command": "GOMAXPROCS=2 GOMEMLIMIT=2GiB go test ./internal/policy -run 'TestMediaParser' -count=1",
+      "exitCode": 0,
+      "passed": true
+    }
+  },
+  "gates": {
+    "cacheSemantics": true,
+    "candidateRankingBudget": true,
+    "queryPolicy": true,
+    "registry": true,
+    "richMedia": true,
+    "structuredJSON": true,
+    "unsafePatternScan": true
+  },
+  "generatedAt": "2026-07-22T09:35:22Z",
+  "hermetic": true,
+  "imageDigest": "notApplicablePreBuild",
+  "liveAggregateOnly": false,
+  "passed": true,
+  "runId": "task15-local-20260722T093432Z",
+  "schemaVersion": 1,
+  "sourceCommit": "c13688205bba9627e46d88d0aba352bb83e4bdb1",
+  "testManifest": [
+    {
+      "command": "GOMAXPROCS=2 GOMEMLIMIT=2GiB go test ./internal/parser/... ./internal/parse ./internal/cache ./internal/media ./tests/contracts -run 'Test(Registry|StructuredJSON|MediaCandidate|CanonicalURL|CacheKey|NegativeCache|NormalizeLivePhoto|DASH)' -count=1",
+      "exitCode": 0,
+      "name": "TestStructuredJSONGoldenMatrix",
+      "packageScope": "internal/parser,...,internal/media,tests/contracts"
+    },
+    {
+      "command": "GOMAXPROCS=2 GOMEMLIMIT=2GiB go test ./internal/parser/... ./internal/parse ./internal/cache ./internal/media ./tests/contracts -run 'Test(Registry|StructuredJSON|MediaCandidate|CanonicalURL|CacheKey|NegativeCache|NormalizeLivePhoto|DASH)' -count=1",
+      "exitCode": 0,
+      "name": "TestMediaCandidateOrderIsStable",
+      "packageScope": "internal/parser,...,internal/media,tests/contracts"
+    },
+    {
+      "command": "GOMAXPROCS=2 GOMEMLIMIT=2GiB go test ./internal/parser/... ./internal/parse ./internal/cache ./internal/media ./tests/contracts -run 'Test(Registry|StructuredJSON|MediaCandidate|CanonicalURL|CacheKey|NegativeCache|NormalizeLivePhoto|DASH)' -count=1",
+      "exitCode": 0,
+      "name": "TestCanonicalURLQueryPolicyMatrix",
+      "packageScope": "internal/parser,...,internal/media,tests/contracts"
+    },
+    {
+      "command": "GOMAXPROCS=2 GOMEMLIMIT=2GiB go test ./internal/parser/... ./internal/parse ./internal/cache ./internal/media ./tests/contracts -run 'Test(Registry|StructuredJSON|MediaCandidate|CanonicalURL|CacheKey|NegativeCache|NormalizeLivePhoto|DASH)' -count=1",
+      "exitCode": 0,
+      "name": "TestCacheVersionChangeMisses",
+      "packageScope": "internal/cache"
+    },
+    {
+      "command": "GOMAXPROCS=2 GOMEMLIMIT=2GiB go test ./internal/parser/... ./internal/parse ./internal/cache ./internal/media ./tests/contracts -run 'Test(Registry|StructuredJSON|MediaCandidate|CanonicalURL|CacheKey|NegativeCache|NormalizeLivePhoto|DASH)' -count=1",
+      "exitCode": 0,
+      "name": "TestNegativeCachePolicyRejectsNonCacheableErrors",
+      "packageScope": "internal/cache"
+    },
+    {
+      "command": "GOMAXPROCS=2 GOMEMLIMIT=2GiB go test ./internal/parser/... ./internal/parse ./internal/cache ./internal/media ./tests/contracts -run 'Test(Registry|StructuredJSON|MediaCandidate|CanonicalURL|CacheKey|NegativeCache|NormalizeLivePhoto|DASH)' -count=1",
+      "exitCode": 0,
+      "name": "TestDASHCandidateOrderAndFallbackBudget",
+      "packageScope": "internal/media"
+    }
+  ],
+  "testManifestSha256": "edab8835ca0d9043cf07f35f6713961c0a92ba398e6d354aeb14d10191470d97"
+}
