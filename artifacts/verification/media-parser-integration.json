@@ -46,14 +46,14 @@
     "structuredJSON": true,
     "unsafePatternScan": true
   },
-  "generatedAt": "2026-07-22T09:35:22Z",
+  "generatedAt": "2026-07-22T10:12:42Z",
   "hermetic": true,
   "imageDigest": "notApplicablePreBuild",
   "liveAggregateOnly": false,
   "passed": true,
-  "runId": "task15-local-20260722T093432Z",
+  "runId": "task15-local-20260722T101242Z",
   "schemaVersion": 1,
-  "sourceCommit": "c13688205bba9627e46d88d0aba352bb83e4bdb1",
+  "sourceCommit": "165510d5d6827bb2a0038f0d7c2acdc3f6ad059a",
   "testManifest": [
     {
       "command": "GOMAXPROCS=2 GOMEMLIMIT=2GiB go test ./internal/parser/... ./internal/parse ./internal/cache ./internal/media ./tests/contracts -run 'Test(Registry|StructuredJSON|MediaCandidate|CanonicalURL|CacheKey|NegativeCache|NormalizeLivePhoto|DASH)' -count=1",
