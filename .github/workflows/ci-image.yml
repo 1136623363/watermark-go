@@ -103,4 +103,4 @@ jobs:
         run: |
           docker run --rm --entrypoint /usr/local/bin/yt-dlp "$IMAGE_REF" --version
           docker run --rm --entrypoint /usr/local/bin/ffmpeg "$IMAGE_REF" -version
-          docker run --rm --entrypoint /usr/local/bin/python3 "$IMAGE_REF" -m py_compile /app/bridges/universal/python/bridge.py
+          docker run --rm --entrypoint /usr/local/bin/python3 "$IMAGE_REF" -c "import pathlib; compile(pathlib.Path('/app/bridges/universal/python/bridge.py').read_text(encoding='utf-8'), '/app/bridges/universal/python/bridge.py', 'exec')"

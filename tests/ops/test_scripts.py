@@ -848,3 +848,9 @@ def test_ci_frontend_checkout_uses_cross_repo_secret():
     workflow = (ROOT / ".github" / "workflows" / "ci-image.yml").read_text(encoding="utf-8")
     assert "repository: 1136623363/watermark" in workflow
     assert "token: ${{ secrets.FRONTEND_REPO_TOKEN }}" in workflow
+
+
+def test_ci_python_runtime_smoke_does_not_write_pycache_under_app():
+    workflow = (ROOT / ".github" / "workflows" / "ci-image.yml").read_text(encoding="utf-8")
+    assert "-m py_compile /app/bridges/universal/python/bridge.py" not in workflow
+    assert "compile(pathlib.Path('/app/bridges/universal/python/bridge.py').read_text" in workflow

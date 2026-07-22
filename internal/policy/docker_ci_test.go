@@ -251,7 +251,7 @@ func TestWorkflowUsesPinnedActionsAndBuildAttestations(t *testing.T) {
 		"steps.build.outputs.digest",
 		"Runtime tool smoke",
 		"/usr/local/bin/ffmpeg",
-		"py_compile /app/bridges/universal/python/bridge.py",
+		"compile(pathlib.Path('/app/bridges/universal/python/bridge.py').read_text",
 		"provenance: true",
 		"sbom: true",
 		"push: true",
