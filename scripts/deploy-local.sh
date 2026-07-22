@@ -30,6 +30,7 @@ esac
 
 scripts/preflight.sh
 docker compose --env-file "$runtime_env" -p "$compose_project" -f "$compose_file" --profile "$role" pull
+docker compose --env-file "$runtime_env" -p "$compose_project" -f "$compose_file" --profile "$role" up -d mysql redis
 docker compose --env-file "$runtime_env" -p "$compose_project" -f "$compose_file" --profile "$role" up --force-recreate --no-deps data-gate-"${role}"
 docker compose --env-file "$runtime_env" -p "$compose_project" -f "$compose_file" --profile "$role" up -d --no-deps "parser-helper-${role}" "egress-proxy-${role}" "api-${role}"
 scripts/smoke.sh "http://127.0.0.1:${smoke_port}" "$attempt_id"

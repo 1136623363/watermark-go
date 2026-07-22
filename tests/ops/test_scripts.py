@@ -791,6 +791,9 @@ def test_shell_scripts_are_guarded_and_never_build_images():
 
     deploy = (ROOT / "scripts" / "deploy-local.sh").read_text(encoding="utf-8")
     assert "--force-recreate --no-deps data-gate-" in deploy
+    assert " up -d mysql redis\n" in deploy
+    assert deploy.index(" pull") < deploy.index(" up -d mysql redis")
+    assert deploy.index(" up -d mysql redis") < deploy.index("--force-recreate --no-deps data-gate-")
     assert "docker compose" in deploy
     assert " pull\n" in deploy or " pull " in deploy
     assert "CANDIDATE_API_HOST_PORT:-15001" in deploy
@@ -805,6 +808,9 @@ def test_shell_scripts_are_guarded_and_never_build_images():
     rollback = (ROOT / "scripts" / "rollback-local.sh").read_text(encoding="utf-8")
     assert "rollbackMode=absent_two_stage" in rollback
     assert "RECOVERY_IMAGE" in rollback
+    assert " up -d mysql redis\n" in rollback
+    assert rollback.index(" pull") < rollback.index(" up -d mysql redis")
+    assert rollback.index(" up -d mysql redis") < rollback.index("--force-recreate --no-deps data-gate-recovery")
 
     observe = (ROOT / "scripts" / "observe.sh").read_text(encoding="utf-8")
     assert "startedAtMonotonicMs" in observe

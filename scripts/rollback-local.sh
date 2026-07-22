@@ -28,6 +28,7 @@ esac
 scripts/preflight.sh
 docker compose --env-file "$runtime_env" -p "$compose_project" -f "$compose_file" --profile candidate stop api-candidate parser-helper-candidate egress-proxy-candidate || true
 docker compose --env-file "$runtime_env" -p "$compose_project" -f "$compose_file" --profile recovery pull
+docker compose --env-file "$runtime_env" -p "$compose_project" -f "$compose_file" --profile recovery up -d mysql redis
 docker compose --env-file "$runtime_env" -p "$compose_project" -f "$compose_file" --profile recovery up --force-recreate --no-deps data-gate-recovery
 docker compose --env-file "$runtime_env" -p "$compose_project" -f "$compose_file" --profile recovery up -d --no-deps parser-helper-recovery egress-proxy-recovery api-recovery
 printf 'PASS rollbackMode=%s project=%s\n' "$rollbackMode" "$compose_project"

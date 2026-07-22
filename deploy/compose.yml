@@ -6,6 +6,7 @@ services:
     image: ${RECOVERY_IMAGE:?same verified A registry digest}
     command: ["/app/bin/watermark-go", "data-gate"]
     environment:
+      APP_ENV: production
       DEPLOY_ROLE: recovery
       DEPLOY_STAGE: ${RECOVERY_DATA_STAGE:?shadow or final}
       EXPECTED_IMAGE_DIGEST: ${RECOVERY_IMAGE:?same verified A registry digest}
@@ -115,6 +116,7 @@ services:
     image: ${CANDIDATE_IMAGE:?same verified B registry digest}
     command: ["/app/bin/watermark-go", "data-gate"]
     environment:
+      APP_ENV: production
       DEPLOY_ROLE: candidate
       DEPLOY_STAGE: ${CANDIDATE_DATA_STAGE:?shadow or final}
       EXPECTED_IMAGE_DIGEST: ${CANDIDATE_IMAGE:?same verified B registry digest}

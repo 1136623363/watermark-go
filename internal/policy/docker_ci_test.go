@@ -195,6 +195,7 @@ func TestComposeDeploymentPolicy(t *testing.T) {
 		gateEnv := envMap(gate)
 		imageKey := strings.ToUpper(role) + "_IMAGE"
 		requiredGateEnv := map[string]string{
+			"APP_ENV":                  "production",
 			"GATE_RECEIPT_PATH":        "/run/watermark-gate/receipt.json",
 			"GATE_ROLE":                role,
 			"GATE_DATA_STAGE":          "${" + strings.ToUpper(role) + "_DATA_STAGE:?shadow or final}",
