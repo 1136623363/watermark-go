@@ -112,9 +112,10 @@ COPY --from=builder /out/watermark-go /app/bin/watermark-go
 COPY --from=builder /out/parser-helper /app/bin/parser-helper
 COPY --from=builder /out/netguard-proxy /app/bin/netguard-proxy
 COPY bridges /app/bridges
+COPY migrations /app/migrations
 
 RUN chmod 0555 /app/bin/watermark-go /app/bin/parser-helper /app/bin/netguard-proxy \
-    && chmod -R a-w /app/bridges /app/tools /app/third_party
+    && chmod -R a-w /app/bridges /app/migrations /app/tools /app/third_party
 
 USER 10001:10001
 EXPOSE 5001

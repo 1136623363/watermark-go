@@ -31,6 +31,17 @@ func (server *Server) Healthcheck(ctx context.Context) error {
 	}
 }
 
+func (server *Server) Serve(ctx context.Context) error {
+	if ctx == nil {
+		return errors.New("parser sandbox serve context is required")
+	}
+	if server == nil {
+		return ErrSandboxUnverified
+	}
+	<-ctx.Done()
+	return nil
+}
+
 func Healthcheck(ctx context.Context, identity Identity, expectedRole string) error {
 	server, err := NewServer(identity, expectedRole)
 	if err != nil {

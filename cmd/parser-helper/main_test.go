@@ -5,6 +5,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 )
 
 func helperEnv(overrides map[string]string) func(string) string {
@@ -41,6 +42,31 @@ func TestParserHelperHealthcheckFailsClosedOnWrongRole(t *testing.T) {
 	code := run(context.Background(), []string{"healthcheck"}, helperEnv(map[string]string{"PARSER_SANDBOX_ROLE": "api"}), &stdout, &stderr)
 	if code == 0 || strings.Contains(stdout.String()+stderr.String(), "unrelated-sentinel") {
 		t.Fatalf("unsafe healthcheck result code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+}
+
+func TestParserHelperServeBlocksWithVerifiedHandshakeUntilContextCancelled(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var stdout, stderr bytes.Buffer
+	done := make(chan int, 1)
+	go func() {
+		done <- run(ctx, []string{"serve"}, helperEnv(nil), &stdout, &stderr)
+	}()
+	select {
+	case code := <-done:
+		t.Fatalf("serve exited before cancellation code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	case <-time.After(50 * time.Millisecond):
+	}
+	cancel()
+	select {
+	case code := <-done:
+		if code != 0 {
+			t.Fatalf("serve cancellation code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+		}
+	case <-time.After(time.Second):
+		t.Fatal("serve did not stop after context cancellation")
 	}
 }
 

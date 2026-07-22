@@ -90,6 +90,12 @@ services:
     environment:
       DEPLOY_ROLE: recovery
       PARSER_UDS: /run/watermark-parser/parser.sock
+      PARSER_SANDBOX_ROLE: parser-helper
+      PARSER_SANDBOX_RUN_ID: ${DEPLOYMENT_RUN_ID:?current run}
+      PARSER_SANDBOX_IMAGE_DIGEST: ${RECOVERY_IMAGE:?same verified A registry digest}
+      PARSER_SANDBOX_UDS: /run/watermark-parser/parser.sock
+      NETGUARD_URL: http://127.0.0.1:18080
+      NETGUARD_POLICY_FINGERPRINT: ${RECOVERY_GATE_CONFIG_HASH:?redacted config hash}
     networks: ["parser-sandbox-recovery"]
     volumes: ["parser-ipc-recovery:/run/watermark-parser"]
     read_only: true
@@ -106,6 +112,8 @@ services:
     environment:
       DEPLOY_ROLE: recovery
       PARSER_UDS: /run/watermark-parser/parser.sock
+      NETGUARD_URL: http://127.0.0.1:18080
+      NETGUARD_POLICY_FINGERPRINT: ${RECOVERY_GATE_CONFIG_HASH:?redacted config hash}
     networks: ["egress", "parser-sandbox-recovery"]
     volumes: ["parser-ipc-recovery:/run/watermark-parser"]
     read_only: true
@@ -202,6 +210,12 @@ services:
     environment:
       DEPLOY_ROLE: candidate
       PARSER_UDS: /run/watermark-parser/parser.sock
+      PARSER_SANDBOX_ROLE: parser-helper
+      PARSER_SANDBOX_RUN_ID: ${DEPLOYMENT_RUN_ID:?current run}
+      PARSER_SANDBOX_IMAGE_DIGEST: ${CANDIDATE_IMAGE:?same verified B registry digest}
+      PARSER_SANDBOX_UDS: /run/watermark-parser/parser.sock
+      NETGUARD_URL: http://127.0.0.1:18080
+      NETGUARD_POLICY_FINGERPRINT: ${CANDIDATE_GATE_CONFIG_HASH:?redacted config hash}
     networks: ["parser-sandbox-candidate"]
     volumes: ["parser-ipc-candidate:/run/watermark-parser"]
     read_only: true
@@ -218,6 +232,8 @@ services:
     environment:
       DEPLOY_ROLE: candidate
       PARSER_UDS: /run/watermark-parser/parser.sock
+      NETGUARD_URL: http://127.0.0.1:18080
+      NETGUARD_POLICY_FINGERPRINT: ${CANDIDATE_GATE_CONFIG_HASH:?redacted config hash}
     networks: ["egress", "parser-sandbox-candidate"]
     volumes: ["parser-ipc-candidate:/run/watermark-parser"]
     read_only: true

@@ -70,6 +70,8 @@ func TestDockerfileAndImageLockPolicy(t *testing.T) {
 		"USER 10001:10001",
 		"org.opencontainers.image.revision",
 		"org.opencontainers.image.source=https://github.com/1136623363/watermark-go",
+		"COPY migrations /app/migrations",
+		"chmod -R a-w /app/bridges /app/migrations /app/tools /app/third_party",
 	} {
 		if !strings.Contains(dockerfile, expected) {
 			t.Fatalf("Dockerfile missing %q", expected)
@@ -234,6 +236,26 @@ func TestComposeDeploymentPolicy(t *testing.T) {
 		helper := document.services["parser-helper-"+role]
 		assertStringSliceEqual(t, serviceStringSlice(helper["entrypoint"]), []string{"/app/bin/parser-helper"})
 		assertStringSliceEqual(t, serviceStringSlice(helper["command"]), []string{"serve"})
+		helperEnv := envMap(helper)
+		requiredHelperEnv := map[string]string{
+			"PARSER_UDS":                  "/run/watermark-parser/parser.sock",
+			"PARSER_SANDBOX_ROLE":         "parser-helper",
+			"PARSER_SANDBOX_RUN_ID":       "${DEPLOYMENT_RUN_ID:?current run}",
+			"PARSER_SANDBOX_IMAGE_DIGEST": imageExpression,
+			"PARSER_SANDBOX_UDS":          "/run/watermark-parser/parser.sock",
+			"NETGUARD_URL":                "http://127.0.0.1:18080",
+			"NETGUARD_POLICY_FINGERPRINT": "${" + strings.ToUpper(role) + "_GATE_CONFIG_HASH:?redacted config hash}",
+		}
+		for key, expected := range requiredHelperEnv {
+			if helperEnv[key] != expected {
+				t.Fatalf("helper %s env %s = %#v, want %s", role, key, helperEnv[key], expected)
+			}
+		}
+		for _, forbidden := range []string{"MYSQL_DSN", "REDIS_ADDR", "ADMIN_PASSWORD", "ADMIN_SESSION_SECRET", "DOWNLOAD_TOKEN_SECRET", "WECHAT_MINI_APP_SECRET"} {
+			if _, ok := helperEnv[forbidden]; ok {
+				t.Fatalf("helper %s received secret/runtime data env %s", role, forbidden)
+			}
+		}
 		if slices.Contains(serviceStringSlice(helper["networks"]), "data") || slices.Contains(serviceStringSlice(helper["networks"]), "egress") {
 			t.Fatalf("helper %s crossed network boundary: %#v", role, helper["networks"])
 		}
@@ -244,6 +266,21 @@ func TestComposeDeploymentPolicy(t *testing.T) {
 		proxy := document.services["egress-proxy-"+role]
 		assertStringSliceEqual(t, serviceStringSlice(proxy["entrypoint"]), []string{"/app/bin/netguard-proxy"})
 		assertStringSliceEqual(t, serviceStringSlice(proxy["command"]), []string{"serve"})
+		proxyEnv := envMap(proxy)
+		requiredProxyEnv := map[string]string{
+			"NETGUARD_URL":                "http://127.0.0.1:18080",
+			"NETGUARD_POLICY_FINGERPRINT": "${" + strings.ToUpper(role) + "_GATE_CONFIG_HASH:?redacted config hash}",
+		}
+		for key, expected := range requiredProxyEnv {
+			if proxyEnv[key] != expected {
+				t.Fatalf("proxy %s env %s = %#v, want %s", role, key, proxyEnv[key], expected)
+			}
+		}
+		for _, forbidden := range []string{"MYSQL_DSN", "REDIS_ADDR", "ADMIN_PASSWORD", "ADMIN_SESSION_SECRET", "DOWNLOAD_TOKEN_SECRET", "WECHAT_MINI_APP_SECRET"} {
+			if _, ok := proxyEnv[forbidden]; ok {
+				t.Fatalf("proxy %s received secret/runtime data env %s", role, forbidden)
+			}
+		}
 		if slices.Contains(serviceStringSlice(proxy["networks"]), "data") {
 			t.Fatalf("proxy %s joined data network", role)
 		}

@@ -26,6 +26,21 @@ func run(parent context.Context, args []string, getenv func(string) string, stdo
 		_ = json.NewEncoder(stdout).Encode(map[string]any{"ok": true, "role": "parser-helper"})
 		return 0
 	}
+	if len(args) == 1 && args[0] == "serve" {
+		if parent == nil {
+			parent = context.Background()
+		}
+		server, err := sandbox.NewServer(identityFromEnv(getenv), "parser-helper")
+		if err != nil {
+			_, _ = fmt.Fprintln(stderr, "parser-helper requires verified sandbox handshake")
+			return 1
+		}
+		if err := server.Serve(parent); err != nil {
+			_, _ = fmt.Fprintln(stderr, "parser-helper stopped")
+			return 1
+		}
+		return 0
+	}
 	_, _ = fmt.Fprintln(stderr, "parser-helper requires verified sandbox handshake")
 	return 1
 }
