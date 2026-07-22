@@ -243,7 +243,11 @@ func TestFrontendProvenanceGuardScript(t *testing.T) {
 		t.Fatalf("frontend provenance guard is missing: %v", err)
 	}
 	command := exec.Command("bash", script)
-	command.Env = append(os.Environ(), "FRONTEND_REPO=/srv/watermark")
+	frontendRepo := os.Getenv("FRONTEND_REPO")
+	if frontendRepo == "" {
+		frontendRepo = "/srv/watermark"
+	}
+	command.Env = append(os.Environ(), "FRONTEND_REPO="+frontendRepo)
 	output, err := command.CombinedOutput()
 	if err != nil {
 		t.Fatalf("frontend provenance guard failed: %v\n%s", err, output)
