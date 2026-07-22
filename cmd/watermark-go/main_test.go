@@ -6,8 +6,10 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/1136623363/watermark-go/internal/config"
+	"github.com/1136623363/watermark-go/internal/store"
 )
 
 func TestRunRequiresExplicitCommand(t *testing.T) {
@@ -87,6 +89,52 @@ func TestDataGateNeverConstructsApplicationOrListener(t *testing.T) {
 	}
 }
 
+func TestDefaultRunDataGateRevalidateWritesBoundReceiptWithoutOpeningDB(t *testing.T) {
+	path := t.TempDir() + "/receipt.json"
+	cfg := config.DataGateConfig{
+		Environment:       config.EnvironmentTest,
+		Mode:              store.GateModeRevalidate,
+		ReceiptPath:       path,
+		Role:              "recovery",
+		DataStage:         "shadow",
+		ImageDigest:       "ghcr.io/1136623363/watermark-go@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		DeploymentRunID:   "deploy-123",
+		GateAttemptID:     "gate-123",
+		SchemaState:       "schema-012",
+		TargetDBIdentity:  "mysql-shadow",
+		RedisIdentity:     "redis-shadow",
+		OutboxIdentity:    "outbox-shadow",
+		InputSnapshotHash: "snapshot-hash",
+		ConfigHash:        "config-hash",
+	}
+
+	if err := defaultRunDataGate(context.Background(), cfg); err != nil {
+		t.Fatalf("defaultRunDataGate() error = %v", err)
+	}
+	receipt, err := store.LoadGateReceipt(path)
+	if err != nil {
+		t.Fatalf("load gate receipt: %v", err)
+	}
+	expect := store.GateExpectation{
+		Role:              cfg.Role,
+		DataStage:         cfg.DataStage,
+		ImageDigest:       cfg.ImageDigest,
+		DeploymentRunID:   cfg.DeploymentRunID,
+		SchemaState:       cfg.SchemaState,
+		TargetDBIdentity:  cfg.TargetDBIdentity,
+		RedisIdentity:     cfg.RedisIdentity,
+		OutboxIdentity:    cfg.OutboxIdentity,
+		InputSnapshotHash: cfg.InputSnapshotHash,
+		ConfigHash:        cfg.ConfigHash,
+	}
+	if err := receipt.Validate(expect, time.Now()); err != nil {
+		t.Fatalf("receipt did not validate: %v", err)
+	}
+	if receipt.GateAttemptID != cfg.GateAttemptID {
+		t.Fatalf("receipt attempt = %q, want %q", receipt.GateAttemptID, cfg.GateAttemptID)
+	}
+}
+
 func TestServeRejectsStaleOrMismatchedGateReceiptBeforeStartingComponents(t *testing.T) {
 	gateErr := errors.New("gate receipt mismatch")
 	deps := validDeps()
@@ -102,6 +150,49 @@ func TestServeRejectsStaleOrMismatchedGateReceiptBeforeStartingComponents(t *tes
 	}
 	if constructed {
 		t.Fatal("serve constructed application before gate receipt passed")
+	}
+}
+
+func TestDefaultVerifyServeGateRejectsMismatchedReceiptIdentity(t *testing.T) {
+	path := t.TempDir() + "/receipt.json"
+	now := time.Now()
+	receipt := store.GateReceipt{
+		SchemaVersion:     store.GateReceiptSchemaVersion,
+		Role:              "recovery",
+		DataStage:         "shadow",
+		ImageDigest:       "ghcr.io/1136623363/watermark-go@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		DeploymentRunID:   "deploy-123",
+		GateAttemptID:     "gate-123",
+		SchemaState:       "schema-012",
+		TargetDBIdentity:  "mysql-shadow",
+		RedisIdentity:     "redis-shadow",
+		OutboxIdentity:    "outbox-shadow",
+		InputSnapshotHash: "snapshot-hash",
+		ConfigHash:        "config-hash",
+		CompletedAt:       now,
+		ExpiresAt:         now.Add(time.Hour),
+		Passed:            true,
+	}
+	if err := store.WriteGateReceiptAtomic(context.Background(), path, receipt); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config.Config{Gate: config.ServeGateConfig{
+		ReceiptPath:       path,
+		Role:              receipt.Role,
+		DataStage:         "final",
+		ImageDigest:       receipt.ImageDigest,
+		DeploymentRunID:   receipt.DeploymentRunID,
+		SchemaState:       receipt.SchemaState,
+		TargetDBIdentity:  receipt.TargetDBIdentity,
+		RedisIdentity:     receipt.RedisIdentity,
+		OutboxIdentity:    receipt.OutboxIdentity,
+		InputSnapshotHash: receipt.InputSnapshotHash,
+		ConfigHash:        receipt.ConfigHash,
+	}}
+	err := defaultVerifyServeGate(context.Background(), cfg)
+	if err == nil || !strings.Contains(err.Error(), "data stage") {
+		t.Fatalf("defaultVerifyServeGate() error = %v, want data stage mismatch", err)
 	}
 }
 

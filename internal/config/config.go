@@ -126,7 +126,17 @@ type BaselineConfig struct {
 }
 
 type ServeGateConfig struct {
-	ReceiptPath string
+	ReceiptPath       string
+	Role              string
+	DataStage         string
+	ImageDigest       string
+	DeploymentRunID   string
+	SchemaState       string
+	TargetDBIdentity  string
+	RedisIdentity     string
+	OutboxIdentity    string
+	InputSnapshotHash string
+	ConfigHash        string
 }
 
 type DataGateConfig struct {
@@ -329,7 +339,17 @@ func LoadWithOptions(getenv func(string) string, options LoadOptions) (Config, e
 			Concurrency: baselineConcurrency,
 		},
 		Gate: ServeGateConfig{
-			ReceiptPath: read.trimmed("GATE_RECEIPT_PATH"),
+			ReceiptPath:       read.trimmed("GATE_RECEIPT_PATH"),
+			Role:              read.trimmed("GATE_ROLE"),
+			DataStage:         read.trimmed("GATE_DATA_STAGE"),
+			ImageDigest:       read.trimmed("IMAGE_DIGEST"),
+			DeploymentRunID:   read.trimmed("DEPLOYMENT_RUN_ID"),
+			SchemaState:       read.trimmed("GATE_SCHEMA_STATE"),
+			TargetDBIdentity:  read.trimmed("GATE_TARGET_DB_IDENTITY"),
+			RedisIdentity:     read.trimmed("GATE_REDIS_IDENTITY"),
+			OutboxIdentity:    read.trimmed("GATE_OUTBOX_IDENTITY"),
+			InputSnapshotHash: read.trimmed("GATE_INPUT_SNAPSHOT_HASH"),
+			ConfigHash:        read.trimmed("GATE_CONFIG_HASH"),
 		},
 	}
 

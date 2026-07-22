@@ -192,6 +192,25 @@ func TestComposeDeploymentPolicy(t *testing.T) {
 		}
 		gate := document.services["data-gate-"+role]
 		assertStringSliceEqual(t, serviceStringSlice(gate["networks"]), []string{"data"})
+		gateEnv := envMap(gate)
+		imageKey := strings.ToUpper(role) + "_IMAGE"
+		requiredGateEnv := map[string]string{
+			"GATE_RECEIPT_PATH":        "/run/watermark-gate/receipt.json",
+			"GATE_ROLE":                role,
+			"GATE_DATA_STAGE":          "${" + strings.ToUpper(role) + "_DATA_STAGE:?shadow or final}",
+			"IMAGE_DIGEST":             "${" + imageKey + ":?same verified " + map[string]string{"recovery": "A", "candidate": "B"}[role] + " registry digest}",
+			"GATE_SCHEMA_STATE":        "${" + strings.ToUpper(role) + "_GATE_SCHEMA_STATE:?schema checksum/version}",
+			"GATE_TARGET_DB_IDENTITY":  "${" + strings.ToUpper(role) + "_GATE_TARGET_DB_IDENTITY:?target db identity}",
+			"GATE_REDIS_IDENTITY":      "${" + strings.ToUpper(role) + "_GATE_REDIS_IDENTITY:?redis identity}",
+			"GATE_OUTBOX_IDENTITY":     "${" + strings.ToUpper(role) + "_GATE_OUTBOX_IDENTITY:?outbox identity}",
+			"GATE_INPUT_SNAPSHOT_HASH": "${" + strings.ToUpper(role) + "_GATE_INPUT_SNAPSHOT_HASH:?input snapshot hash}",
+			"GATE_CONFIG_HASH":         "${" + strings.ToUpper(role) + "_GATE_CONFIG_HASH:?redacted config hash}",
+		}
+		for key, expected := range requiredGateEnv {
+			if gateEnv[key] != expected {
+				t.Fatalf("data gate %s env %s = %#v, want %s", role, key, gateEnv[key], expected)
+			}
+		}
 		if _, ok := envMap(gate)["ADMIN_SESSION_SECRET"]; ok {
 			t.Fatalf("data gate %s received API secret", role)
 		}
@@ -200,6 +219,12 @@ func TestComposeDeploymentPolicy(t *testing.T) {
 		}
 		if health, ok := gate["healthcheck"].(map[string]any); !ok || health["disable"] != true {
 			t.Fatalf("data gate %s healthcheck = %#v", role, gate["healthcheck"])
+		}
+		apiEnv := envMap(document.services["api-"+role])
+		for key, expected := range requiredGateEnv {
+			if apiEnv[key] != expected {
+				t.Fatalf("api %s env %s = %#v, want %s", role, key, apiEnv[key], expected)
+			}
 		}
 
 		helper := document.services["parser-helper-"+role]

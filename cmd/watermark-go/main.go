@@ -8,11 +8,14 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/1136623363/watermark-go/internal/app"
 	"github.com/1136623363/watermark-go/internal/config"
 	"github.com/1136623363/watermark-go/internal/store"
 )
+
+const gateReceiptTTL = time.Hour
 
 type applicationRunner interface {
 	Run(context.Context) error
@@ -100,19 +103,30 @@ func run(ctx context.Context, args []string, deps processDeps) error {
 }
 
 func defaultRunDataGate(ctx context.Context, cfg config.DataGateConfig) error {
-	if cfg.Mode == store.GateModeRevalidate {
-		return nil
-	}
-	db, err := store.OpenMySQL(ctx, store.MySQLConfig{DSN: cfg.MySQLDSN})
-	if err != nil {
+	expectation := gateExpectationFromDataGateConfig(cfg)
+	preflightTime := time.Now().UTC()
+	if err := gateReceiptFromDataGateConfig(cfg, preflightTime).Validate(expectation, preflightTime); err != nil {
 		return err
 	}
-	defer db.Close()
-	migrations, err := store.LoadMigrationsDir(defaultMigrationDir())
-	if err != nil {
+	gateStore := dataGateStoreForConfig(cfg)
+	switch cfg.Mode {
+	case store.GateModeApply:
+		if err := gateStore.Apply(ctx); err != nil {
+			return err
+		}
+	case store.GateModeRevalidate:
+		if err := gateStore.Revalidate(ctx); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("unknown data gate mode")
+	}
+	completedAt := time.Now().UTC()
+	receipt := gateReceiptFromDataGateConfig(cfg, completedAt)
+	if err := receipt.Validate(expectation, completedAt); err != nil {
 		return err
 	}
-	return store.ApplyMigrations(ctx, store.SQLExecutor{DB: db}, migrations)
+	return store.WriteGateReceiptAtomic(ctx, cfg.ReceiptPath, receipt)
 }
 
 func defaultAPIHealthcheck(context.Context, config.Config) error {
@@ -123,8 +137,100 @@ func defaultVerifyServeGate(_ context.Context, cfg config.Config) error {
 	if cfg.Gate.ReceiptPath == "" {
 		return nil
 	}
-	_, err := store.LoadGateReceipt(cfg.Gate.ReceiptPath)
-	return err
+	receipt, err := store.LoadGateReceipt(cfg.Gate.ReceiptPath)
+	if err != nil {
+		return err
+	}
+	return receipt.Validate(gateExpectationFromServeConfig(cfg.Gate), time.Now().UTC())
+}
+
+type migrationGateStore struct {
+	dsn          string
+	migrationDir string
+}
+
+func dataGateStoreForConfig(cfg config.DataGateConfig) store.GateStore {
+	if cfg.Mode == store.GateModeRevalidate {
+		return revalidateGateStore{}
+	}
+	return migrationGateStore{dsn: cfg.MySQLDSN, migrationDir: defaultMigrationDir()}
+}
+
+func (gateStore migrationGateStore) Apply(ctx context.Context) error {
+	db, err := store.OpenMySQL(ctx, store.MySQLConfig{DSN: gateStore.dsn})
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	migrations, err := store.LoadMigrationsDir(gateStore.migrationDir)
+	if err != nil {
+		return err
+	}
+	return store.ApplyMigrations(ctx, store.SQLExecutor{DB: db}, migrations)
+}
+
+func (gateStore migrationGateStore) Revalidate(context.Context) error {
+	return nil
+}
+
+type revalidateGateStore struct{}
+
+func (revalidateGateStore) Apply(context.Context) error {
+	return fmt.Errorf("revalidate gate store cannot apply")
+}
+
+func (revalidateGateStore) Revalidate(context.Context) error {
+	return nil
+}
+
+func gateExpectationFromDataGateConfig(cfg config.DataGateConfig) store.GateExpectation {
+	return store.GateExpectation{
+		Role:              cfg.Role,
+		DataStage:         cfg.DataStage,
+		ImageDigest:       cfg.ImageDigest,
+		DeploymentRunID:   cfg.DeploymentRunID,
+		SchemaState:       cfg.SchemaState,
+		TargetDBIdentity:  cfg.TargetDBIdentity,
+		RedisIdentity:     cfg.RedisIdentity,
+		OutboxIdentity:    cfg.OutboxIdentity,
+		InputSnapshotHash: cfg.InputSnapshotHash,
+		ConfigHash:        cfg.ConfigHash,
+	}
+}
+
+func gateExpectationFromServeConfig(cfg config.ServeGateConfig) store.GateExpectation {
+	return store.GateExpectation{
+		Role:              cfg.Role,
+		DataStage:         cfg.DataStage,
+		ImageDigest:       cfg.ImageDigest,
+		DeploymentRunID:   cfg.DeploymentRunID,
+		SchemaState:       cfg.SchemaState,
+		TargetDBIdentity:  cfg.TargetDBIdentity,
+		RedisIdentity:     cfg.RedisIdentity,
+		OutboxIdentity:    cfg.OutboxIdentity,
+		InputSnapshotHash: cfg.InputSnapshotHash,
+		ConfigHash:        cfg.ConfigHash,
+	}
+}
+
+func gateReceiptFromDataGateConfig(cfg config.DataGateConfig, now time.Time) store.GateReceipt {
+	return store.GateReceipt{
+		SchemaVersion:     store.GateReceiptSchemaVersion,
+		Role:              cfg.Role,
+		DataStage:         cfg.DataStage,
+		ImageDigest:       cfg.ImageDigest,
+		DeploymentRunID:   cfg.DeploymentRunID,
+		GateAttemptID:     cfg.GateAttemptID,
+		SchemaState:       cfg.SchemaState,
+		TargetDBIdentity:  cfg.TargetDBIdentity,
+		RedisIdentity:     cfg.RedisIdentity,
+		OutboxIdentity:    cfg.OutboxIdentity,
+		InputSnapshotHash: cfg.InputSnapshotHash,
+		ConfigHash:        cfg.ConfigHash,
+		CompletedAt:       now,
+		ExpiresAt:         now.Add(gateReceiptTTL),
+		Passed:            true,
+	}
 }
 
 func defaultMigrationDir() string {

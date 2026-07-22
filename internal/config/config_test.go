@@ -300,6 +300,40 @@ func TestLoadDataGateConfigAtMigrationBoundary(t *testing.T) {
 	}
 }
 
+func TestLoadServeGateConfigBindsReceiptIdentity(t *testing.T) {
+	values := map[string]string{
+		"APP_ENV":                  "test",
+		"GATE_RECEIPT_PATH":        "/run/watermark-gate/receipt.json",
+		"GATE_ROLE":                "recovery",
+		"GATE_DATA_STAGE":          "shadow",
+		"IMAGE_DIGEST":             "ghcr.io/1136623363/watermark-go@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"DEPLOYMENT_RUN_ID":        "deploy-123",
+		"GATE_SCHEMA_STATE":        "schema-012",
+		"GATE_TARGET_DB_IDENTITY":  "mysql-shadow",
+		"GATE_REDIS_IDENTITY":      "redis-shadow",
+		"GATE_OUTBOX_IDENTITY":     "outbox-shadow",
+		"GATE_INPUT_SNAPSHOT_HASH": "snapshot-hash",
+		"GATE_CONFIG_HASH":         "config-hash",
+	}
+	cfg, err := LoadWith(environmentReader(values))
+	if err != nil {
+		t.Fatalf("LoadWith() error = %v", err)
+	}
+	if cfg.Gate.ReceiptPath != values["GATE_RECEIPT_PATH"] ||
+		cfg.Gate.Role != values["GATE_ROLE"] ||
+		cfg.Gate.DataStage != values["GATE_DATA_STAGE"] ||
+		cfg.Gate.ImageDigest != values["IMAGE_DIGEST"] ||
+		cfg.Gate.DeploymentRunID != values["DEPLOYMENT_RUN_ID"] ||
+		cfg.Gate.SchemaState != values["GATE_SCHEMA_STATE"] ||
+		cfg.Gate.TargetDBIdentity != values["GATE_TARGET_DB_IDENTITY"] ||
+		cfg.Gate.RedisIdentity != values["GATE_REDIS_IDENTITY"] ||
+		cfg.Gate.OutboxIdentity != values["GATE_OUTBOX_IDENTITY"] ||
+		cfg.Gate.InputSnapshotHash != values["GATE_INPUT_SNAPSHOT_HASH"] ||
+		cfg.Gate.ConfigHash != values["GATE_CONFIG_HASH"] {
+		t.Fatalf("serve gate config = %#v", cfg.Gate)
+	}
+}
+
 func TestLoadRunnerConfigAtEnvironmentBoundary(t *testing.T) {
 	environment := map[string]string{
 		"APP_ENV":                                  "test",

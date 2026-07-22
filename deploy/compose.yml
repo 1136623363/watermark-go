@@ -9,9 +9,19 @@ services:
       DEPLOY_ROLE: recovery
       DEPLOY_STAGE: ${RECOVERY_DATA_STAGE:?shadow or final}
       EXPECTED_IMAGE_DIGEST: ${RECOVERY_IMAGE:?same verified A registry digest}
+      IMAGE_DIGEST: ${RECOVERY_IMAGE:?same verified A registry digest}
       DEPLOYMENT_RUN_ID: ${DEPLOYMENT_RUN_ID:?current run}
       GATE_ATTEMPT_ID: ${RECOVERY_GATE_ATTEMPT_ID:?current gate attempt}
       GATE_MODE: ${RECOVERY_GATE_MODE:?apply or revalidate}
+      GATE_RECEIPT_PATH: /run/watermark-gate/receipt.json
+      GATE_ROLE: recovery
+      GATE_DATA_STAGE: ${RECOVERY_DATA_STAGE:?shadow or final}
+      GATE_SCHEMA_STATE: ${RECOVERY_GATE_SCHEMA_STATE:?schema checksum/version}
+      GATE_TARGET_DB_IDENTITY: ${RECOVERY_GATE_TARGET_DB_IDENTITY:?target db identity}
+      GATE_REDIS_IDENTITY: ${RECOVERY_GATE_REDIS_IDENTITY:?redis identity}
+      GATE_OUTBOX_IDENTITY: ${RECOVERY_GATE_OUTBOX_IDENTITY:?outbox identity}
+      GATE_INPUT_SNAPSHOT_HASH: ${RECOVERY_GATE_INPUT_SNAPSHOT_HASH:?input snapshot hash}
+      GATE_CONFIG_HASH: ${RECOVERY_GATE_CONFIG_HASH:?redacted config hash}
       MIGRATION_SOURCE_DSN: ${RECOVERY_MIGRATION_SOURCE_DSN:?clone DSN}
       MYSQL_DSN: ${RECOVERY_MIGRATION_TARGET_DSN:?least-privilege migrator DSN}
       REDIS_NAMESPACE: ${RECOVERY_REDIS_NAMESPACE:?role-stage namespace}
@@ -31,7 +41,17 @@ services:
       DEPLOY_ROLE: recovery
       DEPLOY_STAGE: ${RECOVERY_DATA_STAGE:?shadow or final}
       EXPECTED_IMAGE_DIGEST: ${RECOVERY_IMAGE:?same verified A registry digest}
+      IMAGE_DIGEST: ${RECOVERY_IMAGE:?same verified A registry digest}
       DEPLOYMENT_RUN_ID: ${DEPLOYMENT_RUN_ID:?current run}
+      GATE_RECEIPT_PATH: /run/watermark-gate/receipt.json
+      GATE_ROLE: recovery
+      GATE_DATA_STAGE: ${RECOVERY_DATA_STAGE:?shadow or final}
+      GATE_SCHEMA_STATE: ${RECOVERY_GATE_SCHEMA_STATE:?schema checksum/version}
+      GATE_TARGET_DB_IDENTITY: ${RECOVERY_GATE_TARGET_DB_IDENTITY:?target db identity}
+      GATE_REDIS_IDENTITY: ${RECOVERY_GATE_REDIS_IDENTITY:?redis identity}
+      GATE_OUTBOX_IDENTITY: ${RECOVERY_GATE_OUTBOX_IDENTITY:?outbox identity}
+      GATE_INPUT_SNAPSHOT_HASH: ${RECOVERY_GATE_INPUT_SNAPSHOT_HASH:?input snapshot hash}
+      GATE_CONFIG_HASH: ${RECOVERY_GATE_CONFIG_HASH:?redacted config hash}
       MYSQL_DSN: ${RECOVERY_MYSQL_DSN:?role target DSN}
       REDIS_ADDR: ${RECOVERY_REDIS_ADDR:?role Redis identity}
       REDIS_NAMESPACE: ${RECOVERY_REDIS_NAMESPACE:?role-stage namespace}
@@ -98,9 +118,19 @@ services:
       DEPLOY_ROLE: candidate
       DEPLOY_STAGE: ${CANDIDATE_DATA_STAGE:?shadow or final}
       EXPECTED_IMAGE_DIGEST: ${CANDIDATE_IMAGE:?same verified B registry digest}
+      IMAGE_DIGEST: ${CANDIDATE_IMAGE:?same verified B registry digest}
       DEPLOYMENT_RUN_ID: ${DEPLOYMENT_RUN_ID:?current run}
       GATE_ATTEMPT_ID: ${CANDIDATE_GATE_ATTEMPT_ID:?current gate attempt}
       GATE_MODE: ${CANDIDATE_GATE_MODE:?apply or revalidate}
+      GATE_RECEIPT_PATH: /run/watermark-gate/receipt.json
+      GATE_ROLE: candidate
+      GATE_DATA_STAGE: ${CANDIDATE_DATA_STAGE:?shadow or final}
+      GATE_SCHEMA_STATE: ${CANDIDATE_GATE_SCHEMA_STATE:?schema checksum/version}
+      GATE_TARGET_DB_IDENTITY: ${CANDIDATE_GATE_TARGET_DB_IDENTITY:?target db identity}
+      GATE_REDIS_IDENTITY: ${CANDIDATE_GATE_REDIS_IDENTITY:?redis identity}
+      GATE_OUTBOX_IDENTITY: ${CANDIDATE_GATE_OUTBOX_IDENTITY:?outbox identity}
+      GATE_INPUT_SNAPSHOT_HASH: ${CANDIDATE_GATE_INPUT_SNAPSHOT_HASH:?input snapshot hash}
+      GATE_CONFIG_HASH: ${CANDIDATE_GATE_CONFIG_HASH:?redacted config hash}
       MIGRATION_SOURCE_DSN: ${CANDIDATE_MIGRATION_SOURCE_DSN:?clone DSN}
       MYSQL_DSN: ${CANDIDATE_MIGRATION_TARGET_DSN:?least-privilege migrator DSN}
       REDIS_NAMESPACE: ${CANDIDATE_REDIS_NAMESPACE:?role-stage namespace}
@@ -120,7 +150,17 @@ services:
       DEPLOY_ROLE: candidate
       DEPLOY_STAGE: ${CANDIDATE_DATA_STAGE:?shadow or final}
       EXPECTED_IMAGE_DIGEST: ${CANDIDATE_IMAGE:?same verified B registry digest}
+      IMAGE_DIGEST: ${CANDIDATE_IMAGE:?same verified B registry digest}
       DEPLOYMENT_RUN_ID: ${DEPLOYMENT_RUN_ID:?current run}
+      GATE_RECEIPT_PATH: /run/watermark-gate/receipt.json
+      GATE_ROLE: candidate
+      GATE_DATA_STAGE: ${CANDIDATE_DATA_STAGE:?shadow or final}
+      GATE_SCHEMA_STATE: ${CANDIDATE_GATE_SCHEMA_STATE:?schema checksum/version}
+      GATE_TARGET_DB_IDENTITY: ${CANDIDATE_GATE_TARGET_DB_IDENTITY:?target db identity}
+      GATE_REDIS_IDENTITY: ${CANDIDATE_GATE_REDIS_IDENTITY:?redis identity}
+      GATE_OUTBOX_IDENTITY: ${CANDIDATE_GATE_OUTBOX_IDENTITY:?outbox identity}
+      GATE_INPUT_SNAPSHOT_HASH: ${CANDIDATE_GATE_INPUT_SNAPSHOT_HASH:?input snapshot hash}
+      GATE_CONFIG_HASH: ${CANDIDATE_GATE_CONFIG_HASH:?redacted config hash}
       MYSQL_DSN: ${CANDIDATE_MYSQL_DSN:?role target DSN}
       REDIS_ADDR: ${CANDIDATE_REDIS_ADDR:?role Redis identity}
       REDIS_NAMESPACE: ${CANDIDATE_REDIS_NAMESPACE:?role-stage namespace}
