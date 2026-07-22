@@ -854,3 +854,10 @@ def test_ci_python_runtime_smoke_does_not_write_pycache_under_app():
     workflow = (ROOT / ".github" / "workflows" / "ci-image.yml").read_text(encoding="utf-8")
     assert "-m py_compile /app/bridges/universal/python/bridge.py" not in workflow
     assert "compile(pathlib.Path('/app/bridges/universal/python/bridge.py').read_text" in workflow
+
+
+def test_ci_release_evidence_only_pushes_do_not_rebuild_images():
+    workflow = (ROOT / ".github" / "workflows" / "ci-image.yml").read_text(encoding="utf-8")
+    assert "paths-ignore:" in workflow
+    assert '"artifacts/release/**"' in workflow
+    assert '"artifacts/verification/**"' in workflow
