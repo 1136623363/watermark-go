@@ -27,6 +27,7 @@ jobs:
           repository: 1136623363/watermark
           ref: 5d72c4925017676b6183b907dfe11ec60a4885bf
           path: .frontend-contract
+          token: ${{ secrets.FRONTEND_REPO_TOKEN }}
           persist-credentials: false
 
       - name: Setup Go

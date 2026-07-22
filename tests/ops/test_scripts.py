@@ -842,3 +842,9 @@ def test_verify_acceptance_cli_rejects_old_pass_artifact(tmp_path):
     )
     assert proc.returncode != 0
     assert "deploymentRunId" in proc.stderr
+
+
+def test_ci_frontend_checkout_uses_cross_repo_secret():
+    workflow = (ROOT / ".github" / "workflows" / "ci-image.yml").read_text(encoding="utf-8")
+    assert "repository: 1136623363/watermark" in workflow
+    assert "token: ${{ secrets.FRONTEND_REPO_TOKEN }}" in workflow
