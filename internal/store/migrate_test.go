@@ -89,8 +89,77 @@ func TestApplyMigrationsSkipsAlreadyAppliedVersions(t *testing.T) {
 	}
 }
 
+func TestExpectedMigrationSchemaStateBindsVersionNameAndSQL(t *testing.T) {
+	migrations := testMigrations()
+	state := ExpectedMigrationSchemaState(migrations)
+	if state == "" || !strings.HasPrefix(state, "migrations:") {
+		t.Fatalf("schema state = %q, want migrations hash", state)
+	}
+
+	renamed := append([]Migration(nil), migrations...)
+	renamed[0].Name = "001_renamed"
+	if ExpectedMigrationSchemaState(renamed) == state {
+		t.Fatal("schema state did not change after migration name changed")
+	}
+
+	changedSQL := append([]Migration(nil), migrations...)
+	changedSQL[0].SQL += "\n-- changed"
+	if ExpectedMigrationSchemaState(changedSQL) == state {
+		t.Fatal("schema state did not change after migration SQL changed")
+	}
+}
+
+func TestValidateAppliedMigrationSchemaStateIsReadOnlyAndFailClosed(t *testing.T) {
+	migrations := testMigrations()
+	expected := ExpectedMigrationSchemaState(migrations)
+	executor := &recordingMigrationExecutor{applied: map[string]bool{}}
+	for _, migration := range migrations {
+		executor.applied[migration.Version] = true
+	}
+
+	if err := ValidateAppliedMigrationSchemaState(context.Background(), executor, migrations, expected); err != nil {
+		t.Fatalf("ValidateAppliedMigrationSchemaState() error = %v", err)
+	}
+	if executor.ensureCalls != 0 || len(executor.appliedOrder) != 0 {
+		t.Fatalf("revalidate wrote through executor: ensure=%d applied=%v", executor.ensureCalls, executor.appliedOrder)
+	}
+
+	wrongStateExecutor := &recordingMigrationExecutor{applied: executor.applied}
+	if err := ValidateAppliedMigrationSchemaState(context.Background(), wrongStateExecutor, migrations, "schema-012"); err == nil {
+		t.Fatal("ValidateAppliedMigrationSchemaState() accepted mismatched schema state")
+	}
+	if wrongStateExecutor.hasCalls != 0 {
+		t.Fatalf("mismatched schema state touched DB %d times", wrongStateExecutor.hasCalls)
+	}
+
+	missingExecutor := &recordingMigrationExecutor{applied: map[string]bool{}}
+	for _, migration := range migrations[1:] {
+		missingExecutor.applied[migration.Version] = true
+	}
+	if err := ValidateAppliedMigrationSchemaState(context.Background(), missingExecutor, migrations, expected); err == nil {
+		t.Fatal("ValidateAppliedMigrationSchemaState() accepted missing migration")
+	}
+	if missingExecutor.ensureCalls != 0 || len(missingExecutor.appliedOrder) != 0 {
+		t.Fatalf("missing migration revalidate wrote through executor: ensure=%d applied=%v", missingExecutor.ensureCalls, missingExecutor.appliedOrder)
+	}
+}
+
+func testMigrations() []Migration {
+	migrations := make([]Migration, 0, 12)
+	for index := 1; index <= 12; index++ {
+		version := fmt.Sprintf("%03d", index)
+		migrations = append(migrations, Migration{
+			Version: version,
+			Name:    version + "_test",
+			SQL:     fmt.Sprintf("CREATE TABLE IF NOT EXISTS t_%s (id INT);", version),
+		})
+	}
+	return migrations
+}
+
 type recordingMigrationExecutor struct {
 	ensureCalls  int
+	hasCalls     int
 	applied      map[string]bool
 	appliedOrder []string
 }
@@ -101,6 +170,7 @@ func (executor *recordingMigrationExecutor) EnsureMigrationTable(context.Context
 }
 
 func (executor *recordingMigrationExecutor) HasMigration(_ context.Context, version string) (bool, error) {
+	executor.hasCalls++
 	return executor.applied[version], nil
 }
 

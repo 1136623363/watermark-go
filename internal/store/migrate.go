@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -112,6 +114,41 @@ func ApplyMigrations(ctx context.Context, executor MigrationExecutor, migrations
 		}
 		if err := executor.ApplyMigration(ctx, migration); err != nil {
 			return fmt.Errorf("apply migration %s: %w", migration.Name, err)
+		}
+	}
+	return nil
+}
+
+func ExpectedMigrationSchemaState(migrations []Migration) string {
+	hash := sha256.New()
+	for _, migration := range migrations {
+		statementHash := sha256.Sum256([]byte(migration.SQL))
+		_, _ = fmt.Fprintf(hash, "%s\x00%s\x00%s\n", migration.Version, migration.Name, hex.EncodeToString(statementHash[:]))
+	}
+	return "migrations:" + hex.EncodeToString(hash.Sum(nil))
+}
+
+func ValidateAppliedMigrationSchemaState(ctx context.Context, executor MigrationExecutor, migrations []Migration, expectedState string) error {
+	if ctx == nil {
+		return errors.New("migration context is required")
+	}
+	if executor == nil {
+		return errors.New("migration executor is required")
+	}
+	if err := ValidateMigrations(migrations); err != nil {
+		return err
+	}
+	actualState := ExpectedMigrationSchemaState(migrations)
+	if strings.TrimSpace(expectedState) == "" || expectedState != actualState {
+		return fmt.Errorf("migration schema state mismatch")
+	}
+	for _, migration := range migrations {
+		applied, err := executor.HasMigration(ctx, migration.Version)
+		if err != nil {
+			return fmt.Errorf("check migration %s: %w", migration.Name, err)
+		}
+		if !applied {
+			return fmt.Errorf("migration %s is not applied", migration.Name)
 		}
 	}
 	return nil

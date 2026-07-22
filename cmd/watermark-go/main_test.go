@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -89,7 +90,7 @@ func TestDataGateNeverConstructsApplicationOrListener(t *testing.T) {
 	}
 }
 
-func TestDefaultRunDataGateRevalidateWritesBoundReceiptWithoutOpeningDB(t *testing.T) {
+func TestDefaultRunDataGateRevalidateRejectsMismatchedSchemaStateBeforeReceipt(t *testing.T) {
 	path := t.TempDir() + "/receipt.json"
 	cfg := config.DataGateConfig{
 		Environment:       config.EnvironmentTest,
@@ -108,30 +109,41 @@ func TestDefaultRunDataGateRevalidateWritesBoundReceiptWithoutOpeningDB(t *testi
 		ConfigHash:        "config-hash",
 	}
 
-	if err := defaultRunDataGate(context.Background(), cfg); err != nil {
-		t.Fatalf("defaultRunDataGate() error = %v", err)
+	err := defaultRunDataGate(context.Background(), cfg)
+	if err == nil || !strings.Contains(err.Error(), "schema state") {
+		t.Fatalf("defaultRunDataGate() error = %v, want schema state mismatch", err)
 	}
-	receipt, err := store.LoadGateReceipt(path)
-	if err != nil {
-		t.Fatalf("load gate receipt: %v", err)
+	if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+		t.Fatalf("receipt was written despite failed revalidate: %v", statErr)
 	}
-	expect := store.GateExpectation{
-		Role:              cfg.Role,
-		DataStage:         cfg.DataStage,
-		ImageDigest:       cfg.ImageDigest,
-		DeploymentRunID:   cfg.DeploymentRunID,
-		SchemaState:       cfg.SchemaState,
-		TargetDBIdentity:  cfg.TargetDBIdentity,
-		RedisIdentity:     cfg.RedisIdentity,
-		OutboxIdentity:    cfg.OutboxIdentity,
-		InputSnapshotHash: cfg.InputSnapshotHash,
-		ConfigHash:        cfg.ConfigHash,
+}
+
+func TestDefaultRunDataGateRevalidateRequiresReadOnlyDatabaseValidation(t *testing.T) {
+	path := t.TempDir() + "/receipt.json"
+	cfg := config.DataGateConfig{
+		Environment:       config.EnvironmentTest,
+		Mode:              store.GateModeRevalidate,
+		MySQLDSN:          "",
+		ReceiptPath:       path,
+		Role:              "recovery",
+		DataStage:         "shadow",
+		ImageDigest:       "ghcr.io/1136623363/watermark-go@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		DeploymentRunID:   "deploy-123",
+		GateAttemptID:     "gate-123",
+		SchemaState:       currentMigrationSchemaState(t),
+		TargetDBIdentity:  "mysql-shadow",
+		RedisIdentity:     "redis-shadow",
+		OutboxIdentity:    "outbox-shadow",
+		InputSnapshotHash: "snapshot-hash",
+		ConfigHash:        "config-hash",
 	}
-	if err := receipt.Validate(expect, time.Now()); err != nil {
-		t.Fatalf("receipt did not validate: %v", err)
+
+	err := defaultRunDataGate(context.Background(), cfg)
+	if err == nil || !strings.Contains(err.Error(), "mysql dsn is required") {
+		t.Fatalf("defaultRunDataGate() error = %v, want mysql dsn failure", err)
 	}
-	if receipt.GateAttemptID != cfg.GateAttemptID {
-		t.Fatalf("receipt attempt = %q, want %q", receipt.GateAttemptID, cfg.GateAttemptID)
+	if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+		t.Fatalf("receipt was written despite failed revalidate: %v", statErr)
 	}
 }
 
@@ -249,4 +261,13 @@ func (runner runnerStub) Run(ctx context.Context) error {
 		return nil
 	}
 	return runner.run(ctx)
+}
+
+func currentMigrationSchemaState(t *testing.T) string {
+	t.Helper()
+	migrations, err := store.LoadMigrationsDir(defaultMigrationDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return store.ExpectedMigrationSchemaState(migrations)
 }

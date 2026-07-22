@@ -108,7 +108,14 @@ func defaultRunDataGate(ctx context.Context, cfg config.DataGateConfig) error {
 	if err := gateReceiptFromDataGateConfig(cfg, preflightTime).Validate(expectation, preflightTime); err != nil {
 		return err
 	}
-	gateStore := dataGateStoreForConfig(cfg)
+	migrations, err := store.LoadMigrationsDir(defaultMigrationDir())
+	if err != nil {
+		return err
+	}
+	if err := validateConfiguredMigrationState(cfg.SchemaState, migrations); err != nil {
+		return err
+	}
+	gateStore := dataGateStoreForConfig(cfg, migrations)
 	switch cfg.Mode {
 	case store.GateModeApply:
 		if err := gateStore.Apply(ctx); err != nil {
@@ -147,13 +154,17 @@ func defaultVerifyServeGate(_ context.Context, cfg config.Config) error {
 type migrationGateStore struct {
 	dsn          string
 	migrationDir string
+	schemaState  string
+	migrations   []store.Migration
 }
 
-func dataGateStoreForConfig(cfg config.DataGateConfig) store.GateStore {
-	if cfg.Mode == store.GateModeRevalidate {
-		return revalidateGateStore{}
+func dataGateStoreForConfig(cfg config.DataGateConfig, migrations []store.Migration) store.GateStore {
+	return migrationGateStore{
+		dsn:          cfg.MySQLDSN,
+		migrationDir: defaultMigrationDir(),
+		schemaState:  cfg.SchemaState,
+		migrations:   append([]store.Migration(nil), migrations...),
 	}
-	return migrationGateStore{dsn: cfg.MySQLDSN, migrationDir: defaultMigrationDir()}
 }
 
 func (gateStore migrationGateStore) Apply(ctx context.Context) error {
@@ -166,21 +177,20 @@ func (gateStore migrationGateStore) Apply(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return store.ApplyMigrations(ctx, store.SQLExecutor{DB: db}, migrations)
+	executor := store.SQLExecutor{DB: db}
+	if err := store.ApplyMigrations(ctx, executor, migrations); err != nil {
+		return err
+	}
+	return store.ValidateAppliedMigrationSchemaState(ctx, executor, migrations, gateStore.schemaState)
 }
 
-func (gateStore migrationGateStore) Revalidate(context.Context) error {
-	return nil
-}
-
-type revalidateGateStore struct{}
-
-func (revalidateGateStore) Apply(context.Context) error {
-	return fmt.Errorf("revalidate gate store cannot apply")
-}
-
-func (revalidateGateStore) Revalidate(context.Context) error {
-	return nil
+func (gateStore migrationGateStore) Revalidate(ctx context.Context) error {
+	db, err := store.OpenMySQL(ctx, store.MySQLConfig{DSN: gateStore.dsn})
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	return store.ValidateAppliedMigrationSchemaState(ctx, store.SQLExecutor{DB: db}, gateStore.migrations, gateStore.schemaState)
 }
 
 func gateExpectationFromDataGateConfig(cfg config.DataGateConfig) store.GateExpectation {
@@ -231,6 +241,13 @@ func gateReceiptFromDataGateConfig(cfg config.DataGateConfig, now time.Time) sto
 		ExpiresAt:         now.Add(gateReceiptTTL),
 		Passed:            true,
 	}
+}
+
+func validateConfiguredMigrationState(schemaState string, migrations []store.Migration) error {
+	if schemaState != store.ExpectedMigrationSchemaState(migrations) {
+		return fmt.Errorf("migration schema state mismatch")
+	}
+	return nil
 }
 
 func defaultMigrationDir() string {
