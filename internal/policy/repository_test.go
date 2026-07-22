@@ -337,7 +337,7 @@ type sensitiveMatch struct {
 
 const (
 	configIdentifierExpression = `[A-Za-z][A-Za-z0-9_.-]*`
-	maxPolicyBlobBytes         = 2 * 1024 * 1024
+	maxPolicyBlobBytes         = 8 * 1024 * 1024
 )
 
 var (
