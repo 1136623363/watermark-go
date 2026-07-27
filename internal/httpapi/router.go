@@ -46,6 +46,8 @@ func Router(options RouterOptions) *gin.Engine {
 	_ = router.SetTrustedProxies(nil)
 	router.Use(RequestIDMiddleware(), CORSMiddleware(), RequestLogMiddleware(options.Logger))
 	router.GET("/healthz", health)
+	router.GET("/health", health)
+	router.GET("/api/health", health)
 
 	router.POST("/api/client/session", options.Client.ClientSession)
 	if options.Client.Auth != nil || options.Client.Parse != nil {

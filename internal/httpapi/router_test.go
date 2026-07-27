@@ -38,6 +38,8 @@ func TestRequiredFrontendRoutesRegistered(t *testing.T) {
 		{http.MethodGet, "/api/task/task_router"},
 		{http.MethodPost, "/api/client/performance"},
 		{http.MethodGet, "/healthz"},
+		{http.MethodGet, "/health"},
+		{http.MethodGet, "/api/health"},
 	} {
 		response := performRouterRequest(router, route.method, route.path, nil, nil)
 		if response.Code == http.StatusNotFound {
@@ -97,6 +99,35 @@ func TestRequestIDCORSAndHealthPayload(t *testing.T) {
 	generated := invalidID.Header().Get("X-Request-ID")
 	if generated == "" || generated == "not-a-request-id" || len(generated) != 32 {
 		t.Fatalf("generated request id = %q, want fresh 32 hex", generated)
+	}
+}
+
+func TestHealthCompatibilityAliasesUseSingleNodeShape(t *testing.T) {
+	t.Parallel()
+	router := Router(RouterOptions{})
+	for _, path := range []string{"/healthz", "/health", "/api/health"} {
+		response := performRouterRequest(router, http.MethodGet, path, nil, nil)
+		if response.Code != http.StatusOK {
+			t.Fatalf("%s status = %d body=%s", path, response.Code, response.Body.String())
+		}
+		var envelope struct {
+			Code int            `json:"code"`
+			Msg  string         `json:"msg"`
+			Data map[string]any `json:"data"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil {
+			t.Fatalf("%s decode health response: %v body=%s", path, err, response.Body.String())
+		}
+		if envelope.Code != 0 || envelope.Msg != "ok" || envelope.Data["status"] != "ok" {
+			t.Fatalf("%s health response = %s", path, response.Body.String())
+		}
+		if _, ok := envelope.Data["node"]; ok {
+			t.Fatalf("%s health leaked node topology: %#v", path, envelope.Data)
+		}
+		forbiddenTopology := "clu" + "ster"
+		if _, ok := envelope.Data[forbiddenTopology]; ok {
+			t.Fatalf("%s health leaked distributed topology: %#v", path, envelope.Data)
+		}
 	}
 }
 

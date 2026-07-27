@@ -789,6 +789,10 @@ def test_shell_scripts_are_guarded_and_never_build_images():
         assert "docker load" not in body
         subprocess.run(["bash", "-n", str(path)], check=True)
 
+    smoke = (ROOT / "scripts" / "smoke.sh").read_text(encoding="utf-8")
+    assert '"${base_url%/}/healthz"' in smoke
+    assert '"${base_url%/}/health"' not in smoke
+
     deploy = (ROOT / "scripts" / "deploy-local.sh").read_text(encoding="utf-8")
     assert "--force-recreate --no-deps data-gate-" in deploy
     assert " up -d mysql redis\n" in deploy

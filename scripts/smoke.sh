@@ -16,7 +16,7 @@ fail() {
   exit 1
 }
 
-health_body="$(curl -fsS --connect-timeout 3 --max-time 10 "${base_url%/}/health")" || fail "health endpoint failed"
+health_body="$(curl -fsS --connect-timeout 3 --max-time 10 "${base_url%/}/healthz")" || fail "health endpoint failed"
 case "$health_body" in
   *ok*|*healthy*) ;;
   *) fail "health body did not report ok" ;;
