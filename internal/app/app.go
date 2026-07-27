@@ -409,17 +409,22 @@ func newRuntimeParseService(cfg config.Config) (*runtimeParseService, error) {
 	if err != nil {
 		return nil, fmt.Errorf("construct native parser: %w", err)
 	}
-	resolver, err := parseusecase.NewRegistryResolver(native.Descriptors())
+	descriptors := native.Descriptors()
+	resolver, err := parseusecase.NewRegistryResolver(descriptors)
 	if err != nil {
 		return nil, fmt.Errorf("construct parser resolver: %w", err)
 	}
 	store := newMemoryParseStore()
+	nativeParser := nativeUsecaseParser{
+		service:     nativeService,
+		idPlatforms: supportedIDPlatforms(descriptors),
+	}
 	service := parseusecase.NewService(parseusecase.Dependencies{
 		Parser: parseusecase.ParserChain{Parsers: []parseusecase.Parser{
 			m3u8PassthroughParser{},
-			nativeUsecaseParser{service: nativeService},
+			nativeParser,
 		}},
-		IDParser: nativeUsecaseParser{service: nativeService},
+		IDParser: nativeParser,
 		Resolver: chainResolver{
 			resolvers: []parseusecase.Resolver{
 				m3u8Resolver{},
@@ -734,7 +739,8 @@ func (m3u8PassthroughParser) Parse(_ context.Context, request parseusecase.Parse
 }
 
 type nativeUsecaseParser struct {
-	service *native.Service
+	service     *native.Service
+	idPlatforms map[string]struct{}
 }
 
 func (parser nativeUsecaseParser) Parse(ctx context.Context, request parseusecase.ParserRequest) (parseusecase.Result, error) {
@@ -752,11 +758,35 @@ func (parser nativeUsecaseParser) ParseID(ctx context.Context, request parseusec
 	if parser.service == nil {
 		return parseusecase.Result{}, parseusecase.NewError(parseusecase.ErrorInternal, parseusecase.StageParser, request.Source, true)
 	}
+	source := strings.ToLower(strings.TrimSpace(request.Source))
+	if len(parser.idPlatforms) > 0 {
+		if _, ok := parser.idPlatforms[source]; !ok {
+			return parseusecase.Result{}, parseusecase.NewError(parseusecase.ErrorUnsupported, parseusecase.StageInput, source, false)
+		}
+	}
 	info, err := parser.service.ParseVideoID(ctx, request.Source, request.VideoID)
 	if err != nil {
 		return parseusecase.Result{}, err
 	}
 	return nativeInfoToUsecaseResult(request.Source, info), nil
+}
+
+func supportedIDPlatforms(descriptors []coreparser.Descriptor) map[string]struct{} {
+	platforms := make(map[string]struct{})
+	for _, descriptor := range descriptors {
+		if !descriptor.SupportsID {
+			continue
+		}
+		if key := strings.ToLower(strings.TrimSpace(string(descriptor.Key))); key != "" {
+			platforms[key] = struct{}{}
+		}
+		for _, alias := range descriptor.Aliases {
+			if key := strings.ToLower(strings.TrimSpace(string(alias))); key != "" {
+				platforms[key] = struct{}{}
+			}
+		}
+	}
+	return platforms
 }
 
 func nativeInfoToUsecaseResult(platform string, info *native.VideoParseInfo) parseusecase.Result {

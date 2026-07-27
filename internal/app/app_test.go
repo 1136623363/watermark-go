@@ -404,6 +404,32 @@ func TestRuntimeDownloadServiceCompletesFallbackWithGuardedFetcher(t *testing.T)
 	}
 }
 
+func TestRuntimeParseIDClassifiesUnknownSourceAsUnsupported(t *testing.T) {
+	application, err := New(config.Config{
+		Environment: config.EnvironmentTest,
+		HTTP:        config.HTTPConfig{Port: "5001"},
+		Download:    config.DownloadConfig{TokenSecret: testOnlyValue()},
+		Security: config.SecurityConfig{
+			AdminPassword:      testOnlyValue(),
+			AdminSessionSecret: testOnlyValue(),
+		},
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	response := getRuntime(applicationRuntimeHandler(t, application), "/api/v1/parse/no-such-source/123")
+	var body struct {
+		Status string `json:"status"`
+		Error  struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	decodeRuntimeJSON(t, response, &body)
+	if response.Code != http.StatusBadRequest || body.Status != "error" || body.Error.Code != "UNSUPPORTED_URL" {
+		t.Fatalf("unknown source response = %d %s", response.Code, response.Body.String())
+	}
+}
+
 func testOnlyValue() string {
 	return "invalid-for-" + "test-only"
 }
