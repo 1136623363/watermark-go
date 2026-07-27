@@ -67,10 +67,17 @@ wait_for_support_services() {
   done
 }
 
+prepare_gate_receipt_volume() {
+  docker compose --env-file "$runtime_env" -p "$compose_project" -f "$compose_file" --profile "$role" run --rm --no-deps \
+    --entrypoint /bin/sh --user 0:0 data-gate-"${role}" \
+    -c 'set -e; mkdir -p /run/watermark-gate; chown 10001:10001 /run/watermark-gate; chmod 0700 /run/watermark-gate'
+}
+
 scripts/preflight.sh
 docker compose --env-file "$runtime_env" -p "$compose_project" -f "$compose_file" --profile "$role" pull
 docker compose --env-file "$runtime_env" -p "$compose_project" -f "$compose_file" --profile "$role" up -d mysql redis
 wait_for_support_services
+prepare_gate_receipt_volume
 docker compose --env-file "$runtime_env" -p "$compose_project" -f "$compose_file" --profile "$role" up --force-recreate --no-deps data-gate-"${role}"
 docker compose --env-file "$runtime_env" -p "$compose_project" -f "$compose_file" --profile "$role" up -d --no-deps "parser-helper-${role}" "egress-proxy-${role}" "api-${role}"
 scripts/smoke.sh "http://127.0.0.1:${smoke_port}" "$attempt_id"

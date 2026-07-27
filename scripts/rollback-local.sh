@@ -50,11 +50,18 @@ wait_for_support_services() {
   done
 }
 
+prepare_gate_receipt_volume() {
+  docker compose --env-file "$runtime_env" -p "$compose_project" -f "$compose_file" --profile recovery run --rm --no-deps \
+    --entrypoint /bin/sh --user 0:0 data-gate-recovery \
+    -c 'set -e; mkdir -p /run/watermark-gate; chown 10001:10001 /run/watermark-gate; chmod 0700 /run/watermark-gate'
+}
+
 scripts/preflight.sh
 docker compose --env-file "$runtime_env" -p "$compose_project" -f "$compose_file" --profile candidate stop api-candidate parser-helper-candidate egress-proxy-candidate || true
 docker compose --env-file "$runtime_env" -p "$compose_project" -f "$compose_file" --profile recovery pull
 docker compose --env-file "$runtime_env" -p "$compose_project" -f "$compose_file" --profile recovery up -d mysql redis
 wait_for_support_services
+prepare_gate_receipt_volume
 docker compose --env-file "$runtime_env" -p "$compose_project" -f "$compose_file" --profile recovery up --force-recreate --no-deps data-gate-recovery
 docker compose --env-file "$runtime_env" -p "$compose_project" -f "$compose_file" --profile recovery up -d --no-deps parser-helper-recovery egress-proxy-recovery api-recovery
 printf 'PASS rollbackMode=%s project=%s\n' "$rollbackMode" "$compose_project"

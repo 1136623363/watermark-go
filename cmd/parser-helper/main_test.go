@@ -70,6 +70,21 @@ func TestParserHelperServeBlocksWithVerifiedHandshakeUntilContextCancelled(t *te
 	}
 }
 
+func TestParserHelperServeContextIsSignalCancelable(t *testing.T) {
+	t.Parallel()
+	ctx, stop := serveContext(context.Background())
+	defer stop()
+	if ctx.Done() == nil {
+		t.Fatal("serve context must expose a cancellation channel")
+	}
+	stop()
+	select {
+	case <-ctx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("serve context did not cancel")
+	}
+}
+
 func TestParserHelperDefaultCommandDoesNotStartWithoutHandshake(t *testing.T) {
 	t.Parallel()
 	var stdout, stderr bytes.Buffer

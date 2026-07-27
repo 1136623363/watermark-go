@@ -3,6 +3,7 @@ package sandbox
 import (
 	"context"
 	"errors"
+	"time"
 )
 
 type Server struct {
@@ -38,7 +39,15 @@ func (server *Server) Serve(ctx context.Context) error {
 	if server == nil {
 		return ErrSandboxUnverified
 	}
-	<-ctx.Done()
+	done := ctx.Done()
+	if done == nil {
+		ticker := time.NewTicker(time.Hour)
+		defer ticker.Stop()
+		for range ticker.C {
+		}
+		return nil
+	}
+	<-done
 	return nil
 }
 

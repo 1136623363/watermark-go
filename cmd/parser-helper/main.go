@@ -6,13 +6,24 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/1136623363/watermark-go/internal/parser/sandbox"
 )
 
 func main() {
-	os.Exit(run(context.Background(), os.Args[1:], os.Getenv, os.Stdout, os.Stderr))
+	ctx, stop := serveContext(context.Background())
+	defer stop()
+	os.Exit(run(ctx, os.Args[1:], os.Getenv, os.Stdout, os.Stderr))
+}
+
+func serveContext(parent context.Context) (context.Context, context.CancelFunc) {
+	if parent == nil {
+		parent = context.Background()
+	}
+	return signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
 }
 
 func run(parent context.Context, args []string, getenv func(string) string, stdout, stderr io.Writer) int {

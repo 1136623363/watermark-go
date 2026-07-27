@@ -793,14 +793,20 @@ def test_shell_scripts_are_guarded_and_never_build_images():
     assert "--force-recreate --no-deps data-gate-" in deploy
     assert " up -d mysql redis\n" in deploy
     assert "wait_for_support_services" in deploy
+    assert "prepare_gate_receipt_volume" in deploy
+    assert "chown 10001:10001 /run/watermark-gate" in deploy
     assert "mysqladmin ping" in deploy
     assert "redis-cli ping" in deploy
     deploy_wait_call = "\nwait_for_support_services\n"
+    deploy_prepare_call = "\nprepare_gate_receipt_volume\n"
     assert deploy_wait_call in deploy
+    assert deploy_prepare_call in deploy
     assert deploy.index(" pull") < deploy.index(" up -d mysql redis")
     assert deploy.index(" up -d mysql redis") < deploy.index("--force-recreate --no-deps data-gate-")
     assert deploy.index(" up -d mysql redis") < deploy.index(deploy_wait_call)
     assert deploy.index(deploy_wait_call) < deploy.index("--force-recreate --no-deps data-gate-")
+    assert deploy.index(deploy_wait_call) < deploy.index(deploy_prepare_call)
+    assert deploy.index(deploy_prepare_call) < deploy.index("--force-recreate --no-deps data-gate-")
     assert "runtime_value()" in deploy
     assert 'runtime_value "RECOVERY_API_HOST_PORT" "5001"' in deploy
     assert 'runtime_value "CANDIDATE_API_HOST_PORT" "15001"' in deploy
@@ -820,14 +826,20 @@ def test_shell_scripts_are_guarded_and_never_build_images():
     assert "RECOVERY_IMAGE" in rollback
     assert " up -d mysql redis\n" in rollback
     assert "wait_for_support_services" in rollback
+    assert "prepare_gate_receipt_volume" in rollback
+    assert "chown 10001:10001 /run/watermark-gate" in rollback
     assert "mysqladmin ping" in rollback
     assert "redis-cli ping" in rollback
     rollback_wait_call = "\nwait_for_support_services\n"
+    rollback_prepare_call = "\nprepare_gate_receipt_volume\n"
     assert rollback_wait_call in rollback
+    assert rollback_prepare_call in rollback
     assert rollback.index(" pull") < rollback.index(" up -d mysql redis")
     assert rollback.index(" up -d mysql redis") < rollback.index("--force-recreate --no-deps data-gate-recovery")
     assert rollback.index(" up -d mysql redis") < rollback.index(rollback_wait_call)
     assert rollback.index(rollback_wait_call) < rollback.index("--force-recreate --no-deps data-gate-recovery")
+    assert rollback.index(rollback_wait_call) < rollback.index(rollback_prepare_call)
+    assert rollback.index(rollback_prepare_call) < rollback.index("--force-recreate --no-deps data-gate-recovery")
 
     observe = (ROOT / "scripts" / "observe.sh").read_text(encoding="utf-8")
     assert "startedAtMonotonicMs" in observe
