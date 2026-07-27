@@ -1,14 +1,31 @@
 package app
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
 	"reflect"
+	"sort"
+	"strings"
+	"sync"
 	"time"
 
+	"github.com/1136623363/watermark-go/internal/admin"
+	"github.com/1136623363/watermark-go/internal/auth"
 	"github.com/1136623363/watermark-go/internal/config"
+	"github.com/1136623363/watermark-go/internal/download"
 	"github.com/1136623363/watermark-go/internal/httpapi"
+	"github.com/1136623363/watermark-go/internal/netguard"
+	parseusecase "github.com/1136623363/watermark-go/internal/parse"
+	coreparser "github.com/1136623363/watermark-go/internal/parser"
+	"github.com/1136623363/watermark-go/internal/parser/native"
+	"github.com/1136623363/watermark-go/internal/task"
 )
 
 const DefaultShutdownTimeout = 20 * time.Second
@@ -23,6 +40,7 @@ type Option func(*options) error
 
 type options struct {
 	components      []Component
+	componentsSet   bool
 	shutdownTimeout time.Duration
 }
 
@@ -56,7 +74,6 @@ type lifecycleEvent struct {
 
 func New(cfg config.Config, supplied ...Option) (*App, error) {
 	settings := options{
-		components:      []Component{httpapi.NewServerFromConfig(cfg, httpapi.Router(httpapi.RouterOptions{}))},
 		shutdownTimeout: DefaultShutdownTimeout,
 	}
 	for _, option := range supplied {
@@ -69,6 +86,13 @@ func New(cfg config.Config, supplied ...Option) (*App, error) {
 	}
 	if settings.shutdownTimeout <= 0 {
 		return nil, errors.New("shutdown timeout must be positive")
+	}
+	if !settings.componentsSet {
+		handler, err := buildRuntimeHandler(cfg)
+		if err != nil {
+			return nil, err
+		}
+		settings.components = []Component{httpapi.NewServerFromConfig(cfg, handler)}
 	}
 	doneChannels := make([]<-chan error, len(settings.components))
 	for index, component := range settings.components {
@@ -90,6 +114,7 @@ func New(cfg config.Config, supplied ...Option) (*App, error) {
 func WithComponents(components ...Component) Option {
 	return func(settings *options) error {
 		settings.components = append([]Component(nil), components...)
+		settings.componentsSet = true
 		return nil
 	}
 }
@@ -312,4 +337,537 @@ func (application *App) stop(started []startedComponent, shutdownCtx context.Con
 		}
 	}
 	return result
+}
+
+func buildRuntimeHandler(cfg config.Config) (http.Handler, error) {
+	authService, err := auth.NewService(auth.ServiceOptions{
+		Environment: cfg.Environment,
+		Store:       auth.NewMemoryStore(),
+		Entropy:     rand.Reader,
+		WeChat: auth.WeChatConfig{
+			AppID:     cfg.Security.WechatMiniAppID,
+			AppSecret: cfg.Security.WechatMiniAppSecret,
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("construct client auth: %w", err)
+	}
+	parseService, err := newRuntimeParseService(cfg)
+	if err != nil {
+		return nil, err
+	}
+	taskStore := task.NewMemoryStore()
+	parseTasks := parseusecase.NewAsyncTasks(parseusecase.AsyncTaskDependencies{
+		Store:   taskStore,
+		Entropy: rand.Reader,
+	})
+	rawDownloadService, err := download.NewService(download.ServiceOptions{
+		SigningKey:    []byte(cfg.Download.TokenSecret),
+		Entropy:       rand.Reader,
+		TempRoot:      runtimeTempRoot(cfg),
+		PublicBaseURL: "",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("construct download service: %w", err)
+	}
+	downloadFetcher, err := newRuntimeDownloadFetcher()
+	if err != nil {
+		return nil, fmt.Errorf("construct download fetcher: %w", err)
+	}
+	downloadService := &runtimeDownloadService{
+		inner:   rawDownloadService,
+		fetcher: downloadFetcher,
+	}
+	adminService, err := newRuntimeAdminService(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return httpapi.Router(httpapi.RouterOptions{
+		Client: httpapi.ClientHandlers{
+			Auth:  authService,
+			Parse: authenticatedParse(parseService),
+		},
+		Parse:      httpapi.ParseHandlers{Service: parseService},
+		ParseTasks: httpapi.ParseTaskHandlers{Service: parseTasks},
+		Download:   httpapi.DownloadHandlers{Service: downloadService},
+		Admin:      httpapi.AdminHandlers{Service: adminService},
+	}), nil
+}
+
+func newRuntimeParseService(cfg config.Config) (*runtimeParseService, error) {
+	fetcher, err := netguard.NewDefaultFetcher()
+	if err != nil {
+		return nil, fmt.Errorf("construct guarded fetcher: %w", err)
+	}
+	nativeService, err := native.NewService(coreparser.Dependencies{
+		Fetcher:     fetcher,
+		Clock:       time.Now,
+		WeiboCookie: cfg.Parser.WeiboCookie,
+		XiguaCookie: cfg.Parser.XiguaCookie,
+		SohuToken:   cfg.Parser.SohuAPIToken,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("construct native parser: %w", err)
+	}
+	resolver, err := parseusecase.NewRegistryResolver(native.Descriptors())
+	if err != nil {
+		return nil, fmt.Errorf("construct parser resolver: %w", err)
+	}
+	store := newMemoryParseStore()
+	service := parseusecase.NewService(parseusecase.Dependencies{
+		Parser: parseusecase.ParserChain{Parsers: []parseusecase.Parser{
+			m3u8PassthroughParser{},
+			nativeUsecaseParser{service: nativeService},
+		}},
+		IDParser: nativeUsecaseParser{service: nativeService},
+		Resolver: chainResolver{
+			resolvers: []parseusecase.Resolver{
+				m3u8Resolver{},
+				resolver,
+			},
+		},
+		Store:   store,
+		Entropy: rand.Reader,
+	})
+	return &runtimeParseService{service: service, cache: store}, nil
+}
+
+func newRuntimeDownloadFetcher() (*netguard.Fetcher, error) {
+	validator, err := netguard.NewValidator(netguard.ValidatorOptions{})
+	if err != nil {
+		return nil, err
+	}
+	maxBytes, err := maxRuntimeDownloadBytes()
+	if err != nil {
+		return nil, err
+	}
+	return netguard.NewFetcher(netguard.FetcherOptions{
+		Validator: validator,
+		Limits: netguard.Limits{
+			ResponseHeaderBytes: 64 << 10,
+			WireBodyBytes:       maxBytes,
+			DecodedBodyBytes:    maxBytes,
+			Duration:            10 * time.Minute,
+		},
+	})
+}
+
+func maxRuntimeDownloadBytes() (int64, error) {
+	mediaTypes := []download.MediaType{
+		download.MediaTypeVideo,
+		download.MediaTypeAudio,
+		download.MediaTypeImage,
+	}
+	var maxBytes int64
+	for _, mediaType := range mediaTypes {
+		limit, err := download.MaxBytesForMediaType(mediaType)
+		if err != nil {
+			return 0, err
+		}
+		if limit > maxBytes {
+			maxBytes = limit
+		}
+	}
+	if maxBytes <= 0 {
+		return 0, errors.New("download media limit must be positive")
+	}
+	return maxBytes, nil
+}
+
+type runtimeParseService struct {
+	service *parseusecase.Service
+	cache   *memoryParseStore
+}
+
+func (service *runtimeParseService) Parse(ctx context.Context, request parseusecase.Request) (parseusecase.ParseOutput, error) {
+	if service == nil || service.service == nil {
+		return parseusecase.ParseOutput{}, parseusecase.NewError(parseusecase.ErrorInternal, parseusecase.StageParser, "", true)
+	}
+	return service.service.Parse(ctx, request)
+}
+
+func (service *runtimeParseService) ParseID(ctx context.Context, request parseusecase.IDRequest) (parseusecase.ParseOutput, error) {
+	if service == nil || service.service == nil {
+		return parseusecase.ParseOutput{}, parseusecase.NewError(parseusecase.ErrorUnsupported, parseusecase.StageInput, request.Source, false)
+	}
+	return service.service.ParseID(ctx, request)
+}
+
+func (service *runtimeParseService) GetCached(ctx context.Context, shareID string) (parseusecase.CompatData, bool, error) {
+	if service == nil || service.cache == nil {
+		return parseusecase.CompatData{}, false, nil
+	}
+	return service.cache.GetCached(ctx, shareID)
+}
+
+func authenticatedParse(service *runtimeParseService) httpapi.ParseFunc {
+	return func(ctx context.Context, _ auth.AuthenticatedClient, request httpapi.ParseRequest) (any, error) {
+		output, err := service.Parse(ctx, parseusecase.Request{
+			URL:          request.URL,
+			ForceRefresh: request.ForceRefresh,
+			Source:       request.Source,
+			Timestamp:    request.Timestamp,
+			Signature:    request.Signature,
+			Version:      request.Version,
+		})
+		if err != nil {
+			return nil, err
+		}
+		return output.Data, nil
+	}
+}
+
+type guardedFetcher interface {
+	Fetch(context.Context, netguard.FetchRequest) (*http.Response, error)
+}
+
+type runtimeDownloadService struct {
+	inner       *download.Service
+	fetcher     guardedFetcher
+	idleTimeout time.Duration
+}
+
+func (service *runtimeDownloadService) CreateFallback(ctx context.Context, request download.CreateRequest) (download.TaskView, error) {
+	if service == nil || service.inner == nil {
+		return download.TaskView{}, errors.New("download service unavailable")
+	}
+	view, err := service.inner.CreateFallback(ctx, request)
+	if err != nil {
+		return download.TaskView{}, err
+	}
+	service.startFallbackTransfer(view.TaskID, request)
+	return view, nil
+}
+
+func (service *runtimeDownloadService) startFallbackTransfer(taskID string, request download.CreateRequest) {
+	go func() {
+		ctx := context.Background()
+		if err := service.completeFallbackTransfer(ctx, taskID, request); err != nil {
+			_ = service.inner.MarkFailed(context.Background(), taskID)
+		}
+	}()
+}
+
+func (service *runtimeDownloadService) completeFallbackTransfer(ctx context.Context, taskID string, request download.CreateRequest) error {
+	if service == nil || service.inner == nil || service.fetcher == nil {
+		return errors.New("download transfer unavailable")
+	}
+	target, err := netguard.NewFetchURL(strings.TrimSpace(request.MediaURL))
+	if err != nil {
+		return errors.Join(download.ErrUnsafeTarget, err)
+	}
+	maxBytes, err := download.MaxBytesForMediaType(request.MediaType)
+	if err != nil {
+		return err
+	}
+	release, err := service.inner.AcquireTransfer(ctx, request.ClientID)
+	if err != nil {
+		return err
+	}
+	defer release()
+
+	response, err := service.fetcher.Fetch(ctx, netguard.FetchRequest{
+		Method:       http.MethodGet,
+		URL:          target,
+		Header:       make(http.Header),
+		MaxRedirects: 3,
+	})
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = response.Body.Close()
+	}()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return fmt.Errorf("download media fetch status %d", response.StatusCode)
+	}
+
+	var body bytes.Buffer
+	idleTimeout := service.idleTimeout
+	if idleTimeout <= 0 {
+		idleTimeout = 15 * time.Second
+	}
+	if _, err := download.CopyWithIdleDeadline(ctx, &body, response.Body, download.StreamOptions{
+		IdleTimeout: idleTimeout,
+		MaxBytes:    maxBytes,
+	}); err != nil {
+		return err
+	}
+	return service.inner.WriteCompletedFile(ctx, taskID, body.Bytes(), response.Header.Get("Content-Type"))
+}
+
+func (service *runtimeDownloadService) GetFallback(ctx context.Context, taskID string, ticket string) (download.TaskView, bool, error) {
+	if service == nil || service.inner == nil {
+		return download.TaskView{}, false, errors.New("download service unavailable")
+	}
+	return service.inner.GetFallback(ctx, taskID, ticket)
+}
+
+func (service *runtimeDownloadService) CreateM3U8(ctx context.Context, request download.M3U8Request) (download.TaskView, error) {
+	if service == nil || service.inner == nil {
+		return download.TaskView{}, errors.New("download service unavailable")
+	}
+	return service.inner.CreateM3U8(ctx, request)
+}
+
+func (service *runtimeDownloadService) GetM3U8(ctx context.Context, taskID string) (download.TaskView, bool, error) {
+	if service == nil || service.inner == nil {
+		return download.TaskView{}, false, errors.New("download service unavailable")
+	}
+	return service.inner.GetM3U8(ctx, taskID)
+}
+
+func (service *runtimeDownloadService) ValidateDownloadTicket(ctx context.Context, taskID string, ticket string) error {
+	if service == nil || service.inner == nil {
+		return errors.New("download service unavailable")
+	}
+	return service.inner.ValidateDownloadTicket(ctx, taskID, ticket)
+}
+
+func (service *runtimeDownloadService) ValidateFileTicket(ctx context.Context, taskID string, ticket string) error {
+	if service == nil || service.inner == nil {
+		return errors.New("download service unavailable")
+	}
+	return service.inner.ValidateFileTicket(ctx, taskID, ticket)
+}
+
+func (service *runtimeDownloadService) ServeTaskFile(writer http.ResponseWriter, request *http.Request, taskID string) error {
+	if service == nil || service.inner == nil {
+		return errors.New("download service unavailable")
+	}
+	return service.inner.ServeTaskFile(writer, request, taskID)
+}
+
+func newRuntimeAdminService(cfg config.Config) (*admin.Service, error) {
+	userStore, err := newSeededAdminStore(cfg.Security.AdminPassword)
+	if err != nil {
+		return nil, fmt.Errorf("construct admin user store: %w", err)
+	}
+	service, err := admin.NewService(admin.ServiceOptions{
+		Auth: admin.AuthOptions{
+			CookieSigningKey: []byte(cfg.Security.AdminSessionSecret),
+			UserStore:        userStore,
+			Environment:      cfg.Environment,
+			EnvUsername:      "admin",
+			EnvPassword:      cfg.Security.AdminPassword,
+			AllowedOrigins:   []string{},
+			Entropy:          rand.Reader,
+		},
+		StartedAt: time.Now(),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("construct admin service: %w", err)
+	}
+	return service, nil
+}
+
+func runtimeTempRoot(cfg config.Config) string {
+	if workDir := strings.TrimSpace(cfg.Runner.Universal.WorkDir); workDir != "" {
+		return filepath.Join(workDir, "downloads")
+	}
+	return filepath.Join(os.TempDir(), "watermark-go-downloads")
+}
+
+type chainResolver struct {
+	resolvers []parseusecase.Resolver
+}
+
+func (resolver chainResolver) ResolveURL(raw string) (parseusecase.Descriptor, error) {
+	var lastErr error
+	for _, candidate := range resolver.resolvers {
+		if candidate == nil {
+			continue
+		}
+		descriptor, err := candidate.ResolveURL(raw)
+		if err == nil {
+			return descriptor, nil
+		}
+		lastErr = err
+	}
+	if lastErr != nil {
+		return parseusecase.Descriptor{}, lastErr
+	}
+	return parseusecase.Descriptor{}, parseusecase.NewError(parseusecase.ErrorUnsupported, parseusecase.StageInput, "", false)
+}
+
+type m3u8Resolver struct{}
+
+func (m3u8Resolver) ResolveURL(raw string) (parseusecase.Descriptor, error) {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed == nil || parsed.Hostname() == "" || !isHTTP(parsed.Scheme) || !looksLikeM3U8(parsed.Path) {
+		return parseusecase.Descriptor{}, parseusecase.NewError(parseusecase.ErrorUnsupported, parseusecase.StageInput, "", false)
+	}
+	if _, err := netguard.NewFetchURL(parsed.String()); err != nil {
+		return parseusecase.Descriptor{}, parseusecase.NewError(parseusecase.ErrorInvalidInput, parseusecase.StageInput, "m3u8", false)
+	}
+	queryKeys := make([]string, 0, len(parsed.Query()))
+	for key := range parsed.Query() {
+		key = strings.ToLower(strings.TrimSpace(key))
+		if key != "" {
+			queryKeys = append(queryKeys, key)
+		}
+	}
+	sort.Strings(queryKeys)
+	return parseusecase.Descriptor{
+		Platform:  "m3u8",
+		QueryKeys: queryKeys,
+		HostRules: []parseusecase.HostRule{{
+			Host:              strings.ToLower(parsed.Hostname()),
+			IncludeSubdomains: false,
+		}},
+	}, nil
+}
+
+type m3u8PassthroughParser struct{}
+
+func (m3u8PassthroughParser) Parse(_ context.Context, request parseusecase.ParserRequest) (parseusecase.Result, error) {
+	if request.Descriptor.Platform != "m3u8" {
+		return parseusecase.Result{}, parseusecase.NewError(parseusecase.ErrorUnsupported, parseusecase.StageParser, request.Descriptor.Platform, false)
+	}
+	return parseusecase.Result{
+		Platform:   "m3u8",
+		Type:       "m3u8",
+		Title:      "m3u8",
+		M3U8URL:    request.Canonical.URL,
+		PreviewURL: request.Canonical.URL,
+	}, nil
+}
+
+type nativeUsecaseParser struct {
+	service *native.Service
+}
+
+func (parser nativeUsecaseParser) Parse(ctx context.Context, request parseusecase.ParserRequest) (parseusecase.Result, error) {
+	if parser.service == nil {
+		return parseusecase.Result{}, parseusecase.NewError(parseusecase.ErrorInternal, parseusecase.StageParser, request.Descriptor.Platform, true)
+	}
+	info, err := parser.service.ParseVideoShareURL(ctx, request.RawURL)
+	if err != nil {
+		return parseusecase.Result{}, err
+	}
+	return nativeInfoToUsecaseResult(request.Descriptor.Platform, info), nil
+}
+
+func (parser nativeUsecaseParser) ParseID(ctx context.Context, request parseusecase.IDParserRequest) (parseusecase.Result, error) {
+	if parser.service == nil {
+		return parseusecase.Result{}, parseusecase.NewError(parseusecase.ErrorInternal, parseusecase.StageParser, request.Source, true)
+	}
+	info, err := parser.service.ParseVideoID(ctx, request.Source, request.VideoID)
+	if err != nil {
+		return parseusecase.Result{}, err
+	}
+	return nativeInfoToUsecaseResult(request.Source, info), nil
+}
+
+func nativeInfoToUsecaseResult(platform string, info *native.VideoParseInfo) parseusecase.Result {
+	if info == nil {
+		return parseusecase.Result{Platform: strings.TrimSpace(platform)}
+	}
+	result := parseusecase.Result{
+		Platform:   strings.TrimSpace(platform),
+		Type:       "video",
+		Title:      info.Title,
+		VideoURL:   strings.TrimSpace(info.VideoUrl),
+		AudioURL:   strings.TrimSpace(info.MusicUrl),
+		CoverURL:   strings.TrimSpace(info.CoverUrl),
+		PreviewURL: strings.TrimSpace(info.PreviewUrl),
+		Author: parseusecase.Author{
+			UID:    info.Author.Uid,
+			Name:   info.Author.Name,
+			Avatar: info.Author.Avatar,
+		},
+		Images: make([]parseusecase.ImageAsset, 0, len(info.Images)),
+	}
+	if looksLikeM3U8(result.VideoURL) {
+		result.M3U8URL = result.VideoURL
+	}
+	for _, image := range info.Images {
+		result.Images = append(result.Images, parseusecase.ImageAsset{
+			URL:          image.Url,
+			LivePhotoURL: image.LivePhotoUrl,
+		})
+	}
+	if len(result.Images) > 0 && result.VideoURL == "" {
+		result.Type = "gallery"
+	}
+	return result
+}
+
+func looksLikeM3U8(raw string) bool {
+	return strings.Contains(strings.ToLower(strings.TrimSpace(raw)), ".m3u8")
+}
+
+func isHTTP(scheme string) bool {
+	return strings.EqualFold(scheme, "http") || strings.EqualFold(scheme, "https")
+}
+
+type memoryParseStore struct {
+	mu      sync.RWMutex
+	byShare map[string]parseusecase.CompatData
+}
+
+func newMemoryParseStore() *memoryParseStore {
+	return &memoryParseStore{byShare: make(map[string]parseusecase.CompatData)}
+}
+
+func (store *memoryParseStore) SaveResult(_ context.Context, result parseusecase.StoredResult) error {
+	if store == nil {
+		return errors.New("nil parse store")
+	}
+	if strings.TrimSpace(result.ShareID) == "" {
+		return nil
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	store.byShare[result.ShareID] = result.Data
+	return nil
+}
+
+func (store *memoryParseStore) GetCached(_ context.Context, shareID string) (parseusecase.CompatData, bool, error) {
+	if store == nil {
+		return parseusecase.CompatData{}, false, errors.New("nil parse store")
+	}
+	store.mu.RLock()
+	defer store.mu.RUnlock()
+	data, ok := store.byShare[strings.TrimSpace(shareID)]
+	return data, ok, nil
+}
+
+type seededAdminStore struct {
+	mu      sync.Mutex
+	user    admin.User
+	audits  []admin.AuditRecord
+	enabled bool
+}
+
+func newSeededAdminStore(password string) (*seededAdminStore, error) {
+	password = strings.TrimSpace(password)
+	store := &seededAdminStore{}
+	if password == "" {
+		return store, nil
+	}
+	hash, err := admin.HashPassword(password)
+	if err != nil {
+		return nil, err
+	}
+	store.enabled = true
+	store.user = admin.User{Username: "admin", Role: admin.RoleOwner, PasswordHash: hash}
+	return store, nil
+}
+
+func (store *seededAdminStore) FindUser(_ context.Context, username string) (admin.User, bool, error) {
+	if store == nil || !store.enabled || strings.TrimSpace(username) != store.user.Username {
+		return admin.User{}, false, nil
+	}
+	return store.user, true, nil
+}
+
+func (store *seededAdminStore) RecordAudit(_ context.Context, record admin.AuditRecord) error {
+	if store == nil {
+		return errors.New("nil admin store")
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	store.audits = append(store.audits, record)
+	return nil
 }

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -91,6 +92,30 @@ func TestDownloadFallbackRejectsAttemptBelowFourAndSSRF(t *testing.T) {
 	})
 	if !errors.Is(err, netguard.ErrInvalidFetchURL) && !errors.Is(err, ErrUnsafeTarget) {
 		t.Fatalf("CreateFallback(loopback) error = %v, want netguard rejection", err)
+	}
+}
+
+func TestDownloadFallbackCanBeMarkedFailed(t *testing.T) {
+	service := newDownloadServiceForTest(t, ServiceOptions{})
+	created, err := service.CreateFallback(context.Background(), CreateRequest{
+		MediaURL:  "https://example.com/video.mp4",
+		MediaType: MediaTypeVideo,
+		Attempt:   4,
+		ClientID:  "client-a",
+	})
+	if err != nil {
+		t.Fatalf("CreateFallback() error = %v", err)
+	}
+	if err := service.MarkFailed(context.Background(), created.TaskID); err != nil {
+		t.Fatalf("MarkFailed() error = %v", err)
+	}
+	ticket := queryParamForDownloadTest(t, created.PollURL, "ticket")
+	view, ok, err := service.GetFallback(context.Background(), created.TaskID, ticket)
+	if err != nil {
+		t.Fatalf("GetFallback() error = %v", err)
+	}
+	if !ok || view.Status != StatusFailed || view.DownloadURL != "" {
+		t.Fatalf("failed fallback view = %#v, ok=%t", view, ok)
 	}
 }
 
@@ -308,6 +333,19 @@ func newDownloadServiceForTest(t *testing.T, options ServiceOptions) *Service {
 		t.Fatalf("NewService() error = %v", err)
 	}
 	return service
+}
+
+func queryParamForDownloadTest(t *testing.T, raw string, key string) string {
+	t.Helper()
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		t.Fatalf("parse URL %q: %v", raw, err)
+	}
+	value := parsed.Query().Get(key)
+	if value == "" {
+		t.Fatalf("missing query %q in %q", key, raw)
+	}
+	return value
 }
 
 type downloadSequenceReader struct{ next byte }

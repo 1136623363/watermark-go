@@ -400,6 +400,29 @@ func (service *Service) WriteCompletedFile(ctx context.Context, taskID string, b
 	return nil
 }
 
+func (service *Service) MarkFailed(ctx context.Context, taskID string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	taskID = strings.TrimSpace(taskID)
+	if !safeTaskIDPattern.MatchString(taskID) {
+		return ErrUnsafePath
+	}
+	service.mu.Lock()
+	defer service.mu.Unlock()
+	view, ok := service.tasks[taskID]
+	if !ok {
+		return FormatTaskNotFound(taskID)
+	}
+	view.Status = StatusFailed
+	view.Progress = 0
+	if view.ExpiresAt.IsZero() {
+		view.ExpiresAt = service.clock().Add(service.ttl)
+	}
+	service.tasks[taskID] = view
+	return nil
+}
+
 func (service *Service) ServeTaskFile(writer http.ResponseWriter, request *http.Request, taskID string) error {
 	path, err := service.TaskFilePath(taskID)
 	if err != nil {
