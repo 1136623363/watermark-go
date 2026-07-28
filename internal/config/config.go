@@ -64,10 +64,11 @@ type MySQLConfig struct {
 }
 
 type RedisConfig struct {
-	Addr     string
-	Username string
-	Password string
-	DB       int
+	Addr      string
+	Username  string
+	Password  string
+	Namespace string
+	DB        int
 }
 
 type ParserConfig struct {
@@ -310,10 +311,11 @@ func LoadWithOptions(getenv func(string) string, options LoadOptions) (Config, e
 			DSN: read.trimmed("MYSQL_DSN"),
 		},
 		Redis: RedisConfig{
-			Addr:     read.trimmed("REDIS_ADDR"),
-			Username: read.trimmed("REDIS_USERNAME"),
-			Password: read.trimmed("REDIS_PASSWORD"),
-			DB:       redisDB,
+			Addr:      read.trimmed("REDIS_ADDR"),
+			Username:  read.trimmed("REDIS_USERNAME"),
+			Password:  read.trimmed("REDIS_PASSWORD"),
+			Namespace: read.trimmed("REDIS_NAMESPACE"),
+			DB:        redisDB,
 		},
 		Parser: ParserConfig{
 			WeiboCookie:  read.trimmed("WEIBO_COOKIE"),
@@ -541,6 +543,11 @@ func validateProduction(cfg Config) error {
 	}
 	if err := validateMySQLDSN(cfg.MySQL.DSN); err != nil {
 		return err
+	}
+	if cfg.Redis.Addr != "" {
+		if strings.TrimSpace(cfg.Redis.Namespace) == "" || strings.ContainsAny(cfg.Redis.Namespace, "\x00\r\n") {
+			return errors.New("invalid production cache: REDIS_NAMESPACE is required when REDIS_ADDR is configured")
+		}
 	}
 	checks := []struct {
 		name    string

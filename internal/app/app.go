@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/1136623363/watermark-go/internal/admin"
 	"github.com/1136623363/watermark-go/internal/auth"
+	sharedcache "github.com/1136623363/watermark-go/internal/cache"
 	"github.com/1136623363/watermark-go/internal/config"
 	"github.com/1136623363/watermark-go/internal/download"
 	"github.com/1136623363/watermark-go/internal/httpapi"
@@ -25,7 +27,9 @@ import (
 	parseusecase "github.com/1136623363/watermark-go/internal/parse"
 	coreparser "github.com/1136623363/watermark-go/internal/parser"
 	"github.com/1136623363/watermark-go/internal/parser/native"
+	dbstore "github.com/1136623363/watermark-go/internal/store"
 	"github.com/1136623363/watermark-go/internal/task"
+	"github.com/redis/go-redis/v9"
 )
 
 const DefaultShutdownTimeout = 20 * time.Second
@@ -88,11 +92,11 @@ func New(cfg config.Config, supplied ...Option) (*App, error) {
 		return nil, errors.New("shutdown timeout must be positive")
 	}
 	if !settings.componentsSet {
-		handler, err := buildRuntimeHandler(cfg)
+		components, err := buildRuntimeComponents(cfg)
 		if err != nil {
 			return nil, err
 		}
-		settings.components = []Component{httpapi.NewServerFromConfig(cfg, handler)}
+		settings.components = components
 	}
 	doneChannels := make([]<-chan error, len(settings.components))
 	for index, component := range settings.components {
@@ -339,10 +343,28 @@ func (application *App) stop(started []startedComponent, shutdownCtx context.Con
 	return result
 }
 
-func buildRuntimeHandler(cfg config.Config) (http.Handler, error) {
+func buildRuntimeComponents(cfg config.Config) ([]Component, error) {
+	handler, closers, background, err := buildRuntimeHandler(cfg)
+	if err != nil {
+		return nil, err
+	}
+	components := make([]Component, 0, 2+len(background))
+	if len(closers) > 0 {
+		components = append(components, newRuntimeResourceComponent(closers...))
+	}
+	components = append(components, background...)
+	components = append(components, httpapi.NewServerFromConfig(cfg, handler))
+	return components, nil
+}
+
+func buildRuntimeHandler(cfg config.Config) (http.Handler, []io.Closer, []Component, error) {
+	stores, err := newRuntimeStores(cfg)
+	if err != nil {
+		return nil, nil, nil, err
+	}
 	authService, err := auth.NewService(auth.ServiceOptions{
 		Environment: cfg.Environment,
-		Store:       auth.NewMemoryStore(),
+		Store:       stores.authStore,
 		Entropy:     rand.Reader,
 		WeChat: auth.WeChatConfig{
 			AppID:     cfg.Security.WechatMiniAppID,
@@ -350,15 +372,16 @@ func buildRuntimeHandler(cfg config.Config) (http.Handler, error) {
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("construct client auth: %w", err)
+		closeRuntimeClosers(stores.closers)
+		return nil, nil, nil, fmt.Errorf("construct client auth: %w", err)
 	}
-	parseService, err := newRuntimeParseService(cfg)
+	parseService, err := newRuntimeParseService(cfg, stores.parseStore, stores.parseCache)
 	if err != nil {
-		return nil, err
+		closeRuntimeClosers(stores.closers)
+		return nil, nil, nil, err
 	}
-	taskStore := task.NewMemoryStore()
 	parseTasks := parseusecase.NewAsyncTasks(parseusecase.AsyncTaskDependencies{
-		Store:   taskStore,
+		Store:   stores.taskStore,
 		Entropy: rand.Reader,
 	})
 	rawDownloadService, err := download.NewService(download.ServiceOptions{
@@ -368,21 +391,35 @@ func buildRuntimeHandler(cfg config.Config) (http.Handler, error) {
 		PublicBaseURL: "",
 	})
 	if err != nil {
-		return nil, fmt.Errorf("construct download service: %w", err)
+		closeRuntimeClosers(stores.closers)
+		return nil, nil, nil, fmt.Errorf("construct download service: %w", err)
 	}
 	downloadFetcher, err := newRuntimeDownloadFetcher()
 	if err != nil {
-		return nil, fmt.Errorf("construct download fetcher: %w", err)
+		closeRuntimeClosers(stores.closers)
+		return nil, nil, nil, fmt.Errorf("construct download fetcher: %w", err)
 	}
 	downloadService := &runtimeDownloadService{
 		inner:   rawDownloadService,
 		fetcher: downloadFetcher,
 	}
-	adminService, err := newRuntimeAdminService(cfg)
+	adminService, err := newRuntimeAdminService(cfg, stores.adminStore)
 	if err != nil {
-		return nil, err
+		closeRuntimeClosers(stores.closers)
+		return nil, nil, nil, err
 	}
-	return httpapi.Router(httpapi.RouterOptions{
+	var background []Component
+	if cfg.Environment == config.EnvironmentProduction {
+		worker := task.NewWorker(
+			stores.taskStore,
+			parseusecase.TaskExecutor{Parser: parseService},
+			task.WithWorkerID(runtimeWorkerID(cfg)),
+		)
+		background = append(background, newRuntimeTaskWorkerComponent(worker, runtimeTaskWorkerOptions{
+			Concurrency: cfg.Tasks.WorkerConcurrency,
+		}))
+	}
+	handler := httpapi.Router(httpapi.RouterOptions{
 		Client: httpapi.ClientHandlers{
 			Auth:  authService,
 			Parse: authenticatedParse(parseService),
@@ -391,10 +428,117 @@ func buildRuntimeHandler(cfg config.Config) (http.Handler, error) {
 		ParseTasks: httpapi.ParseTaskHandlers{Service: parseTasks},
 		Download:   httpapi.DownloadHandlers{Service: downloadService},
 		Admin:      httpapi.AdminHandlers{Service: adminService},
-	}), nil
+	})
+	return handler, stores.closers, background, nil
 }
 
-func newRuntimeParseService(cfg config.Config) (*runtimeParseService, error) {
+type runtimeStores struct {
+	authStore  auth.Store
+	parseStore runtimeParseResultStore
+	parseCache parseusecase.Cache
+	taskStore  runtimeTaskStore
+	adminStore admin.UserStore
+	closers    []io.Closer
+}
+
+type runtimeParseResultStore interface {
+	parseusecase.Store
+	parseusecase.CachedReader
+}
+
+type runtimeTaskStore interface {
+	parseusecase.AsyncTaskStore
+	task.LeaseStore
+}
+
+func newRuntimeStores(cfg config.Config) (runtimeStores, error) {
+	parseStore := newMemoryParseStore()
+	taskStore := task.NewMemoryStore()
+	stores := runtimeStores{
+		authStore:  auth.NewMemoryStore(),
+		parseStore: parseStore,
+		taskStore:  taskStore,
+		adminStore: nil,
+	}
+	cacheAdapter, cacheCloser, err := newRuntimeParseCache(cfg)
+	if err != nil {
+		return runtimeStores{}, err
+	}
+	if cacheCloser != nil {
+		stores.closers = append(stores.closers, cacheCloser)
+	}
+	stores.parseCache = cacheAdapter
+	if cfg.Environment != config.EnvironmentProduction {
+		return stores, nil
+	}
+	if strings.TrimSpace(cfg.MySQL.DSN) == "" {
+		closeRuntimeClosers(stores.closers)
+		return runtimeStores{}, errors.New("production runtime requires MYSQL_DSN")
+	}
+	db, err := dbstore.OpenMySQL(context.Background(), dbstore.MySQLConfig{DSN: cfg.MySQL.DSN})
+	if err != nil {
+		closeRuntimeClosers(stores.closers)
+		return runtimeStores{}, fmt.Errorf("open production MYSQL_DSN: %w", err)
+	}
+	mysqlStore, err := dbstore.NewMySQLRuntimeStore(db)
+	if err != nil {
+		_ = db.Close()
+		closeRuntimeClosers(stores.closers)
+		return runtimeStores{}, err
+	}
+	if err := mysqlStore.SeedAdminUser(context.Background(), "admin", cfg.Security.AdminPassword); err != nil {
+		_ = db.Close()
+		closeRuntimeClosers(stores.closers)
+		return runtimeStores{}, fmt.Errorf("seed production admin user: %w", err)
+	}
+	stores.authStore = mysqlStore
+	stores.parseStore = mysqlStore
+	stores.taskStore = mysqlStore
+	stores.adminStore = mysqlStore
+	stores.closers = append(stores.closers, db)
+	return stores, nil
+}
+
+func newRuntimeParseCache(cfg config.Config) (parseusecase.Cache, io.Closer, error) {
+	fallback := sharedcache.NewMemory(512)
+	if strings.TrimSpace(cfg.Redis.Addr) == "" {
+		return &runtimeParseCache{store: sharedcache.NewTiered(nil, fallback)}, nil, nil
+	}
+	namespace := strings.TrimSpace(cfg.Redis.Namespace)
+	if namespace == "" {
+		namespace = firstNonEmptyRuntime(cfg.Environment, "development")
+	}
+	client := redis.NewClient(&redis.Options{
+		Addr:     strings.TrimSpace(cfg.Redis.Addr),
+		Username: strings.TrimSpace(cfg.Redis.Username),
+		Password: cfg.Redis.Password,
+		DB:       cfg.Redis.DB,
+	})
+	redisStore, err := sharedcache.NewRedis(client, namespace)
+	if err != nil {
+		_ = client.Close()
+		return nil, nil, err
+	}
+	return &runtimeParseCache{store: sharedcache.NewTiered(redisStore, fallback)}, client, nil
+}
+
+func runtimeWorkerID(cfg config.Config) string {
+	parts := []string{"watermark-go"}
+	for _, value := range []string{cfg.Gate.Role, cfg.Gate.DataStage, cfg.Gate.DeploymentRunID} {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			parts = append(parts, value)
+		}
+	}
+	if len(parts) == 1 {
+		if hostname, err := os.Hostname(); err == nil && strings.TrimSpace(hostname) != "" {
+			parts = append(parts, strings.TrimSpace(hostname))
+		}
+	}
+	return strings.Join(parts, ":")
+}
+
+func newRuntimeParseService(cfg config.Config, store runtimeParseResultStore, cache parseusecase.Cache) (*runtimeParseService, error) {
 	fetcher, err := netguard.NewDefaultFetcher()
 	if err != nil {
 		return nil, fmt.Errorf("construct guarded fetcher: %w", err)
@@ -414,7 +558,6 @@ func newRuntimeParseService(cfg config.Config) (*runtimeParseService, error) {
 	if err != nil {
 		return nil, fmt.Errorf("construct parser resolver: %w", err)
 	}
-	store := newMemoryParseStore()
 	nativeParser := nativeUsecaseParser{
 		service:     nativeService,
 		idPlatforms: supportedIDPlatforms(descriptors),
@@ -431,6 +574,7 @@ func newRuntimeParseService(cfg config.Config) (*runtimeParseService, error) {
 				resolver,
 			},
 		},
+		Cache:   cache,
 		Store:   store,
 		Entropy: rand.Reader,
 	})
@@ -481,7 +625,7 @@ func maxRuntimeDownloadBytes() (int64, error) {
 
 type runtimeParseService struct {
 	service *parseusecase.Service
-	cache   *memoryParseStore
+	cache   parseusecase.CachedReader
 }
 
 func (service *runtimeParseService) Parse(ctx context.Context, request parseusecase.Request) (parseusecase.ParseOutput, error) {
@@ -643,10 +787,13 @@ func (service *runtimeDownloadService) ServeTaskFile(writer http.ResponseWriter,
 	return service.inner.ServeTaskFile(writer, request, taskID)
 }
 
-func newRuntimeAdminService(cfg config.Config) (*admin.Service, error) {
-	userStore, err := newSeededAdminStore(cfg.Security.AdminPassword)
-	if err != nil {
-		return nil, fmt.Errorf("construct admin user store: %w", err)
+func newRuntimeAdminService(cfg config.Config, userStore admin.UserStore) (*admin.Service, error) {
+	if userStore == nil {
+		seeded, err := newSeededAdminStore(cfg.Security.AdminPassword)
+		if err != nil {
+			return nil, fmt.Errorf("construct admin user store: %w", err)
+		}
+		userStore = seeded
 	}
 	service, err := admin.NewService(admin.ServiceOptions{
 		Auth: admin.AuthOptions{

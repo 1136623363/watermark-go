@@ -23,8 +23,8 @@ func TestMigrationsAreOrderedAndIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(migrations) != 12 {
-		t.Fatalf("migration count = %d, want 12", len(migrations))
+	if len(migrations) != 13 {
+		t.Fatalf("migration count = %d, want 13", len(migrations))
 	}
 	for index, migration := range migrations {
 		want := fmt.Sprintf("%03d", index+1)
@@ -51,13 +51,33 @@ func TestMigrationsIncludeTaskLeaseFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	last := migrations[len(migrations)-1]
-	if last.Version != "012" {
-		t.Fatalf("last migration = %s", last.Name)
+	taskLeaseMigration := migrations[11]
+	if taskLeaseMigration.Version != "012" {
+		t.Fatalf("task lease migration = %s", taskLeaseMigration.Name)
 	}
 	for _, fragment := range []string{"locked_by", "locked_until", "next_attempt_at", "idx_status_next_attempt"} {
-		if !strings.Contains(last.SQL, fragment) {
+		if !strings.Contains(taskLeaseMigration.SQL, fragment) {
 			t.Fatalf("task lease migration missing %s", fragment)
+		}
+	}
+}
+
+func TestMigrationsIncludeRuntimePersistenceContracts(t *testing.T) {
+	migrations, err := LoadMigrationsDir(filepath.Join(repoRoot(t), "migrations"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := migrations[len(migrations)-1]
+	if last.Version != "013" {
+		t.Fatalf("last migration = %s, want 013 runtime persistence contract", last.Name)
+	}
+	for _, fragment := range []string{
+		"MODIFY COLUMN share_id VARCHAR(64)",
+		"ADD COLUMN max_attempts",
+		"CREATE TABLE IF NOT EXISTS admin_audit_logs",
+	} {
+		if !strings.Contains(last.SQL, fragment) {
+			t.Fatalf("runtime persistence migration missing %s", fragment)
 		}
 	}
 }
@@ -76,12 +96,13 @@ func TestApplyMigrationsSkipsAlreadyAppliedVersions(t *testing.T) {
 		{Version: "010", Name: "010_next", SQL: "UPDATE three SET id = id;"},
 		{Version: "011", Name: "011_next", SQL: "UPDATE three SET id = id;"},
 		{Version: "012", Name: "012_next", SQL: "UPDATE three SET id = id;"},
+		{Version: "013", Name: "013_next", SQL: "UPDATE three SET id = id;"},
 	}
 	executor := &recordingMigrationExecutor{applied: map[string]bool{"001": true, "003": true}}
 	if err := ApplyMigrations(context.Background(), executor, migrations); err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(executor.appliedOrder, ","); got != "002,004,005,006,007,008,009,010,011,012" {
+	if got := strings.Join(executor.appliedOrder, ","); got != "002,004,005,006,007,008,009,010,011,012,013" {
 		t.Fatalf("applied order = %s", got)
 	}
 	if executor.ensureCalls != 1 {
@@ -145,8 +166,8 @@ func TestValidateAppliedMigrationSchemaStateIsReadOnlyAndFailClosed(t *testing.T
 }
 
 func testMigrations() []Migration {
-	migrations := make([]Migration, 0, 12)
-	for index := 1; index <= 12; index++ {
+	migrations := make([]Migration, 0, 13)
+	for index := 1; index <= 13; index++ {
 		version := fmt.Sprintf("%03d", index)
 		migrations = append(migrations, Migration{
 			Version: version,

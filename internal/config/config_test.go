@@ -77,6 +77,29 @@ func TestLoadProductionRequiresPersistentMySQLAndWechatIdentity(t *testing.T) {
 	}
 }
 
+func TestLoadAPIConfigReadsRedisNamespaceForRoleStageIsolation(t *testing.T) {
+	environment := validProductionEnvironment()
+	environment["REDIS_ADDR"] = "redis:6379"
+	environment["REDIS_NAMESPACE"] = "watermark:recovery:shadow:deploy-a-20260728T145003Z"
+	cfg, err := LoadWith(environmentReader(environment))
+	if err != nil {
+		t.Fatalf("LoadWith() error = %v", err)
+	}
+	if cfg.Redis.Namespace != environment["REDIS_NAMESPACE"] {
+		t.Fatalf("Redis.Namespace = %q, want %q", cfg.Redis.Namespace, environment["REDIS_NAMESPACE"])
+	}
+}
+
+func TestLoadProductionRequiresRedisNamespaceWhenRedisIsConfigured(t *testing.T) {
+	environment := validProductionEnvironment()
+	environment["REDIS_ADDR"] = "redis:6379"
+	environment["REDIS_NAMESPACE"] = ""
+	_, err := LoadWith(environmentReader(environment))
+	if err == nil || !strings.Contains(err.Error(), "REDIS_NAMESPACE") {
+		t.Fatalf("LoadWith() error = %v, want REDIS_NAMESPACE requirement", err)
+	}
+}
+
 func TestLoadProductionRejectsMalformedMySQLDSNWithoutExposingIt(t *testing.T) {
 	environment := validProductionEnvironment()
 	environment["MYSQL_DSN"] = "configured-password-that-must-not-leak"

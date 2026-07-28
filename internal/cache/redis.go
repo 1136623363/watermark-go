@@ -19,7 +19,7 @@ func NewRedis(client *redis.Client, namespace string) (*Redis, error) {
 	if client == nil {
 		return nil, errors.New("redis client is required")
 	}
-	if namespace == "" || strings.ContainsAny(namespace, "\x00\r\n:") {
+	if namespace == "" || strings.ContainsAny(namespace, "\x00\r\n") {
 		return nil, errors.New("redis namespace is invalid")
 	}
 	return &Redis{client: client, namespace: namespace}, nil

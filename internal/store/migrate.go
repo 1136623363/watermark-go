@@ -71,8 +71,8 @@ func LoadMigrationsFS(fsys fs.FS, dir string) ([]Migration, error) {
 }
 
 func ValidateMigrations(migrations []Migration) error {
-	if len(migrations) != 12 {
-		return fmt.Errorf("expected 12 migrations, got %d", len(migrations))
+	if len(migrations) != 13 {
+		return fmt.Errorf("expected 13 migrations, got %d", len(migrations))
 	}
 	seen := make(map[string]bool, len(migrations))
 	for index, migration := range migrations {

@@ -12,10 +12,11 @@ import (
 const defaultMaxAttempts = 2
 
 const MySQLClaimNextStatement = `
-SELECT id, task_id, task_type, payload_json, retry_count
+SELECT id, task_id, task_type, payload_json, retry_count, max_attempts, request_id, client_id, created_at, updated_at
 FROM parse_tasks
 WHERE status = 'pending'
-  AND (next_attempt_at IS NULL OR next_attempt_at <= NOW())
+  AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+  AND retry_count < max_attempts
 ORDER BY created_at ASC
 LIMIT 1
 FOR UPDATE SKIP LOCKED`

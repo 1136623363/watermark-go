@@ -8,6 +8,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 )
 
 func testKey(t *testing.T, version string) Key {
@@ -153,6 +155,26 @@ func TestRedisAndMemoryShareCacheSemantics(t *testing.T) {
 	if _, ok, err := memory.Get(ctx, key); err != nil || ok {
 		t.Fatalf("memory capacity did not evict oldest key: %t/%v", ok, err)
 	}
+}
+
+func TestRedisNamespaceAllowsRoleStageRunFormat(t *testing.T) {
+	key := testKey(t, "schema-v1")
+	namespace := "watermark:recovery:shadow:deploy-a-20260728T145003Z"
+	client := redisClientForNamespaceTest()
+	redisCache, err := NewRedis(client, namespace)
+	if err != nil {
+		t.Fatalf("NewRedis() rejected role/stage/run namespace: %v", err)
+	}
+	if redisCache.namespace != namespace {
+		t.Fatalf("redis namespace = %q, want %q", redisCache.namespace, namespace)
+	}
+	if got := RedisNamespacedKey(namespace, key); got != "wm:"+namespace+":"+key.String() {
+		t.Fatalf("redis key = %q, want namespace-preserving key", got)
+	}
+}
+
+func redisClientForNamespaceTest() *redis.Client {
+	return redis.NewClient(&redis.Options{Addr: "127.0.0.1:0"})
 }
 
 type failingStore struct{}

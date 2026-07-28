@@ -353,6 +353,23 @@ func TestNewWiresRuntimeHTTPDependencies(t *testing.T) {
 	}
 }
 
+func TestNewProductionRejectsRuntimeWithoutPersistentMySQL(t *testing.T) {
+	_, err := New(config.Config{
+		Environment: config.EnvironmentProduction,
+		HTTP:        config.HTTPConfig{Port: "5001"},
+		Download:    config.DownloadConfig{TokenSecret: strings.Repeat("d", 32)},
+		Security: config.SecurityConfig{
+			AdminPassword:       strings.Repeat("a", 24),
+			AdminSessionSecret:  strings.Repeat("s", 32),
+			WechatMiniAppID:     "wx1234567890abcdef",
+			WechatMiniAppSecret: strings.Repeat("w", 16),
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "MYSQL_DSN") {
+		t.Fatalf("New() error = %v, want production MYSQL_DSN requirement", err)
+	}
+}
+
 func TestRuntimeDownloadServiceCompletesFallbackWithGuardedFetcher(t *testing.T) {
 	inner, err := download.NewService(download.ServiceOptions{
 		SigningKey: []byte(testOnlyValue()),
